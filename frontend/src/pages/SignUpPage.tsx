@@ -106,7 +106,7 @@ export default function SignUpPage() {
           <CardContent className="pt-6">
             {error && (
               <div className="mb-6 p-4 bg-red-900/20 border border-red-800 rounded-lg flex items-start gap-3">
-                <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="h-5 w-5 text-red-400 shrink-0 mt-0.5" />
                 <p className="text-sm text-red-400">{error}</p>
               </div>
             )}

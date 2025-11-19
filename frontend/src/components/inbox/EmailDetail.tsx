@@ -27,7 +27,7 @@ interface EmailDetailProps {
 export default function EmailDetail({ emailId, onToggleStar }: EmailDetailProps) {
   const queryClient = useQueryClient();
 
-  const { data: email, isLoading } = useQuery({
+  const { data: email, isLoading } = useQuery<Email>({
     queryKey: ['email', emailId],
     queryFn: () => emailService.getEmailById(emailId!),
     enabled: !!emailId,

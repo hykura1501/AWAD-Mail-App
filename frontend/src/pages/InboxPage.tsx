@@ -102,6 +102,16 @@ export default function InboxPage() {
           <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center">
             <User className="h-5 w-5 text-white" />
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-gray-300 hover:text-white hover:bg-gray-700 flex items-center gap-2"
+            onClick={handleLogout}
+            disabled={logoutMutation.isPending}
+          >
+            <LogOut className="h-4 w-4" />
+            Logout
+          </Button>
         </div>
       </header>
 
