@@ -1,13 +1,16 @@
 package gmail
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"strings"
 	"time"
+	"errors"
 
 	emaildomain "ga03-backend/internal/email/domain"
 
@@ -130,7 +133,7 @@ func (s *Service) GetMailboxes(ctx context.Context, accessToken, refreshToken st
 }
 
 // GetEmails retrieves emails from a specific mailbox/label
-func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken string, labelID string, limit, offset int, onTokenRefresh TokenUpdateFunc) ([]*emaildomain.Email, int, error) {
+func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken string, labelID string, limit, offset int, queryStr string, onTokenRefresh TokenUpdateFunc) ([]*emaildomain.Email, int, error) {
 	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
 	if err != nil {
 		return nil, 0, err
@@ -140,10 +143,47 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 	
 	// Build query
 	query := srv.Users.Messages.List(user)
+	
+	q := ""
 	if labelID != "" && labelID != "ALL" {
-		query = query.LabelIds(labelID)
+		q += "label:" + labelID + " "
 	}
+	if queryStr != "" {
+		q += queryStr
+	}
+	
+	if q != "" {
+		query = query.Q(q)
+	}
+
+	// Handle offset by advancing page token
+	pageToken := ""
+	if offset > 0 {
+		skipped := 0
+		for skipped < offset {
+			toSkip := offset - skipped
+			if toSkip > 500 {
+				toSkip = 500
+			}
+			
+			// Just fetch IDs to skip
+			resp, err := srv.Users.Messages.List(user).Q(q).MaxResults(int64(toSkip)).PageToken(pageToken).Do()
+			if err != nil {
+				return nil, 0, fmt.Errorf("unable to skip messages: %v", err)
+			}
+			
+			skipped += len(resp.Messages)
+			pageToken = resp.NextPageToken
+			if pageToken == "" {
+				break
+			}
+		}
+	}
+
 	query = query.MaxResults(int64(limit))
+	if pageToken != "" {
+		query = query.PageToken(pageToken)
+	}
 
 	messagesResp, err := query.Do()
 	if err != nil {
@@ -165,6 +205,58 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 
 	return emails, int(messagesResp.ResultSizeEstimate), nil
 }
+
+// GetAttachment retrieves an attachment from a message
+func (s *Service) GetAttachment(ctx context.Context, accessToken, refreshToken, messageID, attachmentID string, onTokenRefresh TokenUpdateFunc) (*emaildomain.Attachment, []byte, error) {
+	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	user := "me"
+	
+	// Fetch message to get attachment metadata
+	msg, err := srv.Users.Messages.Get(user, messageID).Format("full").Do()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to retrieve message details: %v", err)
+	}
+
+	// Find attachment metadata
+	var filename, mimeType string
+	var findMetadata func(parts []*gmail.MessagePart)
+	findMetadata = func(parts []*gmail.MessagePart) {
+		for _, part := range parts {
+			if part.Body != nil && part.Body.AttachmentId == attachmentID {
+				filename = part.Filename
+				mimeType = part.MimeType
+				return
+			}
+			if len(part.Parts) > 0 {
+				findMetadata(part.Parts)
+			}
+		}
+	}
+	findMetadata(msg.Payload.Parts)
+
+	// Fetch attachment data
+	attachPart, err := srv.Users.Messages.Attachments.Get(user, messageID, attachmentID).Do()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to retrieve attachment: %v", err)
+	}
+
+	data, err := base64.URLEncoding.DecodeString(attachPart.Data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to decode attachment data: %v", err)
+	}
+
+	return &emaildomain.Attachment{
+		ID:       attachmentID,
+		Name:     filename,
+		MimeType: mimeType,
+		Size:     int64(len(data)),
+	}, data, nil
+}
+
 
 // GetEmailByID retrieves a specific email by ID
 func (s *Service) GetEmailByID(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) (*emaildomain.Email, error) {
@@ -197,6 +289,26 @@ func (s *Service) MarkAsRead(ctx context.Context, accessToken, refreshToken, ema
 	_, err = srv.Users.Messages.Modify(user, emailID, modifyReq).Do()
 	if err != nil {
 		return fmt.Errorf("unable to mark message as read: %v", err)
+	}
+
+	return nil
+}
+
+// MarkAsUnread marks an email as unread
+func (s *Service) MarkAsUnread(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) error {
+	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
+	if err != nil {
+		return err
+	}
+
+	user := "me"
+	modifyReq := &gmail.ModifyMessageRequest{
+		AddLabelIds: []string{"UNREAD"},
+	}
+
+	_, err = srv.Users.Messages.Modify(user, emailID, modifyReq).Do()
+	if err != nil {
+		return fmt.Errorf("unable to mark message as unread: %v", err)
 	}
 
 	return nil
@@ -245,7 +357,7 @@ func (s *Service) ToggleStar(ctx context.Context, accessToken, refreshToken, ema
 }
 
 // SendEmail sends an email
-func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken string, to, subject, body string, onTokenRefresh TokenUpdateFunc) error {
+func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken string, to, subject, body string, files []*multipart.FileHeader, onTokenRefresh TokenUpdateFunc) error {
 	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
 	if err != nil {
 		return err
@@ -253,15 +365,55 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken strin
 
 	user := "me"
 	
-	// Create email message
-	emailMsg := []byte(
-		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
-		"Content-Type: text/html; charset=utf-8\r\n" +
-		"\r\n" + body)
+	var emailMsg bytes.Buffer
+	boundary := "foo_bar_baz"
+
+	// Headers
+	emailMsg.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	emailMsg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	emailMsg.WriteString("MIME-Version: 1.0\r\n")
+	emailMsg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", boundary))
+
+	// Body
+	emailMsg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	emailMsg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n\r\n")
+	emailMsg.WriteString(body)
+	emailMsg.WriteString("\r\n")
+
+	// Attachments
+	for _, file := range files {
+		f, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("unable to open file: %v", err)
+		}
+		defer f.Close()
+
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return fmt.Errorf("unable to read file: %v", err)
+		}
+
+		encodedContent := base64.StdEncoding.EncodeToString(content)
+
+		emailMsg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		emailMsg.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", file.Header.Get("Content-Type"), file.Filename))
+		emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n")
+		emailMsg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", file.Filename))
+		
+		// Split base64 into lines of 76 characters
+		for i := 0; i < len(encodedContent); i += 76 {
+			end := i + 76
+			if end > len(encodedContent) {
+				end = len(encodedContent)
+			}
+			emailMsg.WriteString(encodedContent[i:end] + "\r\n")
+		}
+	}
+
+	emailMsg.WriteString(fmt.Sprintf("--%s--", boundary))
 
 	msg := &gmail.Message{
-		Raw: base64.URLEncoding.EncodeToString(emailMsg),
+		Raw: base64.URLEncoding.EncodeToString(emailMsg.Bytes()),
 	}
 
 	_, err = srv.Users.Messages.Send(user, msg).Do()
@@ -373,12 +525,15 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 		toArray = []string{toHeader}
 	}
 	
-	body := getEmailBody(msg.Payload)
+	body, isHTML := getEmailBody(msg.Payload)
 	preview := body
+	// Strip HTML tags for preview if needed, but for now just truncate
 	if len(preview) > 200 {
 		preview = preview[:200] + "..."
 	}
 	
+	attachments := getAttachments(msg.Payload)
+
 	email := &emaildomain.Email{
 		ID:         msg.Id,
 		Subject:    getHeader(msg.Payload.Headers, "Subject"),
@@ -387,11 +542,12 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 		To:         toArray,
 		Preview:    preview,
 		Body:       body,
-		IsHTML:     true, // Gmail usually returns HTML
+		IsHTML:     isHTML,
 		ReceivedAt: time.Unix(msg.InternalDate/1000, 0),
 		IsRead:     !hasLabel(msg.LabelIds, "UNREAD"),
 		IsStarred:  hasLabel(msg.LabelIds, "STARRED"),
 		MailboxID:  getMailboxID(msg.LabelIds),
+		Attachments: attachments,
 	}
 
 	return email
@@ -406,36 +562,76 @@ func getHeader(headers []*gmail.MessagePartHeader, name string) string {
 	return ""
 }
 
-func getEmailBody(payload *gmail.MessagePart) string {
+func getEmailBody(payload *gmail.MessagePart) (string, bool) {
+	// If the payload itself is the body
 	if payload.Body != nil && payload.Body.Data != "" {
 		data, err := base64.URLEncoding.DecodeString(payload.Body.Data)
 		if err == nil {
-			return string(data)
+			return string(data), payload.MimeType == "text/html"
 		}
 	}
 
-	// Check parts for body
-	for _, part := range payload.Parts {
-		if part.MimeType == "text/html" || part.MimeType == "text/plain" {
-			if part.Body != nil && part.Body.Data != "" {
-				data, err := base64.URLEncoding.DecodeString(part.Body.Data)
-				if err == nil {
-					return string(data)
+	var htmlBody string
+	var plainBody string
+
+	var findBody func(parts []*gmail.MessagePart)
+	findBody = func(parts []*gmail.MessagePart) {
+		for _, part := range parts {
+			if part.MimeType == "text/html" {
+				if part.Body != nil && part.Body.Data != "" {
+					data, err := base64.URLEncoding.DecodeString(part.Body.Data)
+					if err == nil {
+						htmlBody = string(data)
+					}
+				}
+			} else if part.MimeType == "text/plain" {
+				if part.Body != nil && part.Body.Data != "" {
+					data, err := base64.URLEncoding.DecodeString(part.Body.Data)
+					if err == nil {
+						plainBody = string(data)
+					}
 				}
 			}
-		}
-		
-		// Recursively check nested parts
-		if len(part.Parts) > 0 {
-			body := getEmailBody(part)
-			if body != "" {
-				return body
+			
+			if len(part.Parts) > 0 {
+				findBody(part.Parts)
 			}
 		}
 	}
 
-	return ""
+	findBody(payload.Parts)
+
+	if htmlBody != "" {
+		return htmlBody, true
+	}
+	return plainBody, false
 }
+
+func getAttachments(payload *gmail.MessagePart) []emaildomain.Attachment {
+	var attachments []emaildomain.Attachment
+
+	var findAttachments func(parts []*gmail.MessagePart)
+	findAttachments = func(parts []*gmail.MessagePart) {
+		for _, part := range parts {
+			if part.Filename != "" && part.Body != nil && part.Body.AttachmentId != "" {
+				attachments = append(attachments, emaildomain.Attachment{
+					ID:       part.Body.AttachmentId,
+					Name:     part.Filename,
+					Size:     int64(part.Body.Size),
+					MimeType: part.MimeType,
+				})
+			}
+			
+			if len(part.Parts) > 0 {
+				findAttachments(part.Parts)
+			}
+		}
+	}
+
+	findAttachments(payload.Parts)
+	return attachments
+}
+
 
 func hasLabel(labels []string, labelID string) bool {
 	for _, label := range labels {

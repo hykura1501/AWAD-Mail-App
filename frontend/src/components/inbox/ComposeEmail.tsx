@@ -59,7 +59,7 @@ export default function ComposeEmail({
     }
   }, [open, initialSubject, initialBody]);
 
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [isMinimized, setIsMinimized] = useState(false);
 
   const sendMutation = useMutation({
@@ -74,7 +74,12 @@ export default function ComposeEmail({
 
       // For now, we only support sending to the 'to' list as a comma-separated string
       // Backend needs to be updated to handle CC/BCC if required
-      await emailService.sendEmail(allTo.join(", "), subject, body);
+      await emailService.sendEmail(
+        allTo.join(", "),
+        subject,
+        body,
+        attachments
+      );
     },
     onSuccess: () => {
       onOpenChange(false);
@@ -140,7 +145,7 @@ export default function ComposeEmail({
     input.onchange = (e) => {
       const files = (e.target as HTMLInputElement).files;
       if (files) {
-        const newAttachments = Array.from(files).map((file) => file.name);
+        const newAttachments = Array.from(files);
         setAttachments([...attachments, ...newAttachments]);
       }
     };
@@ -148,7 +153,7 @@ export default function ComposeEmail({
   };
 
   const handleRemoveAttachment = (fileName: string) => {
-    setAttachments(attachments.filter((name) => name !== fileName));
+    setAttachments(attachments.filter((file) => file.name !== fileName));
   };
 
   const handleSend = () => {
@@ -406,14 +411,14 @@ export default function ComposeEmail({
             {attachments.length > 0 && (
               <div className="px-4 py-2 border-t border-gray-700">
                 <div className="flex flex-wrap gap-2">
-                  {attachments.map((fileName) => (
+                  {attachments.map((file, index) => (
                     <span
-                      key={fileName}
+                      key={`${file.name}-${index}`}
                       className="inline-flex items-center gap-1 px-2 py-1 bg-gray-700 text-white text-sm rounded-full"
                     >
-                      {fileName}
+                      {file.name}
                       <button
-                        onClick={() => handleRemoveAttachment(fileName)}
+                        onClick={() => handleRemoveAttachment(file.name)}
                         className="hover:bg-gray-600 rounded-full p-0.5"
                       >
                         <X className="h-3 w-3" />

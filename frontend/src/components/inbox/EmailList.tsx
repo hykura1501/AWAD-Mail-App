@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { emailService } from '@/services/email.service';
-import type { Email } from '@/types/email';
-import { cn } from '@/lib/utils';
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { emailService } from "@/services/email.service";
+import { getFromCache, saveToCache } from "@/lib/db";
+import type { Email } from "@/types/email";
+import { cn } from "@/lib/utils";
 import {
   Star,
   StarOff,
@@ -14,8 +15,8 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-} from 'lucide-react';
-import { format } from 'date-fns';
+} from "lucide-react";
+import { format } from "date-fns";
 
 interface EmailListProps {
   mailboxId: string | null;
@@ -32,31 +33,57 @@ export default function EmailList({
   onSelectEmail,
   onToggleStar,
 }: EmailListProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  
+  const [cachedData, setCachedData] = useState<any>(null);
+
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
+  const cacheKey = `emails-${mailboxId}-${offset}-${debouncedSearchQuery}`;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1); // Reset to page 1 on search
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (mailboxId) {
+      getFromCache(cacheKey).then((data) => {
+        if (data) setCachedData(data);
+      });
+    }
+  }, [cacheKey, mailboxId]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['emails', mailboxId, offset],
-    queryFn: () => emailService.getEmailsByMailbox(mailboxId!, ITEMS_PER_PAGE, offset),
+    queryKey: ["emails", mailboxId, offset, debouncedSearchQuery],
+    queryFn: async () => {
+      const result = await emailService.getEmailsByMailbox(
+        mailboxId!,
+        ITEMS_PER_PAGE,
+        offset,
+        debouncedSearchQuery
+      );
+      saveToCache(cacheKey, result);
+      return result;
+    },
     enabled: !!mailboxId,
+    placeholderData: cachedData,
   });
 
   const emails = data?.emails || [];
   const total = data?.total || 0;
   const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
-  const filteredEmails = emails.filter(
-    (email) =>
-      email.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      email.from_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      email.preview.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Client-side filtering is no longer needed as we do server-side search
+  const filteredEmails = emails;
 
   // Reset to page 1 when mailbox changes
   useEffect(() => {
     setCurrentPage(1);
+    setSearchQuery("");
   }, [mailboxId]);
 
   if (!mailboxId) {
@@ -96,14 +123,15 @@ export default function EmailList({
   const getTimeDisplay = (date: string) => {
     const emailDate = new Date(date);
     const now = new Date();
-    const diffInHours = (now.getTime() - emailDate.getTime()) / (1000 * 60 * 60);
+    const diffInHours =
+      (now.getTime() - emailDate.getTime()) / (1000 * 60 * 60);
 
     if (diffInHours < 24) {
-      return format(emailDate, 'h:mm a');
+      return format(emailDate, "h:mm a");
     } else if (diffInHours < 48) {
-      return 'Yesterday';
+      return "Yesterday";
     } else {
-      return format(emailDate, 'MMM d');
+      return format(emailDate, "MMM d");
     }
   };
 
@@ -159,11 +187,11 @@ export default function EmailList({
                 key={email.id}
                 onClick={() => onSelectEmail(email)}
                 className={cn(
-                  'w-full text-left p-4 transition-colors cursor-pointer',
+                  "w-full text-left p-4 transition-colors cursor-pointer",
                   isSelected
-                    ? 'bg-blue-600/20 border-l-4 border-l-blue-500'
-                    : 'hover:bg-gray-800',
-                  !email.is_read && 'bg-gray-800/50'
+                    ? "bg-blue-600/20 border-l-4 border-l-blue-500"
+                    : "hover:bg-gray-800",
+                  !email.is_read && "bg-gray-800/50"
                 )}
               >
                 <div className="flex items-start gap-3">
@@ -179,7 +207,7 @@ export default function EmailList({
                       e.stopPropagation();
                       onToggleStar(email.id);
                     }}
-                    className="mt-0.5 flex-shrink-0 cursor-pointer"
+                    className="mt-0.5 shrink-0 cursor-pointer"
                   >
                     {email.is_starred ? (
                       <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
@@ -191,27 +219,29 @@ export default function EmailList({
                     <div className="flex items-center justify-between mb-1">
                       <span
                         className={cn(
-                          'text-sm font-medium truncate',
-                          isSelected ? 'text-white' : 'text-gray-300',
-                          !email.is_read && 'font-semibold'
+                          "text-sm font-medium truncate",
+                          isSelected ? "text-white" : "text-gray-300",
+                          !email.is_read && "font-semibold"
                         )}
                       >
                         {email.from_name || email.from}
                       </span>
-                      <span className="text-xs text-gray-500 flex-shrink-0 ml-2">
+                      <span className="text-xs text-gray-500 shrink-0 ml-2">
                         {getTimeDisplay(email.received_at)}
                       </span>
                     </div>
                     <div
                       className={cn(
-                        'text-sm mb-1 truncate',
-                        isSelected ? 'text-white' : 'text-gray-400',
-                        !email.is_read && 'font-medium'
+                        "text-sm mb-1 truncate",
+                        isSelected ? "text-white" : "text-gray-400",
+                        !email.is_read && "font-medium"
                       )}
                     >
                       {email.subject}
                     </div>
-                    <div className="text-xs text-gray-500 truncate">{email.preview}</div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {email.preview}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -223,17 +253,18 @@ export default function EmailList({
       {/* Pagination */}
       <div className="p-4 border-t border-gray-700 flex items-center justify-between text-sm text-gray-400 bg-gray-800">
         <span>
-          Showing {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+          Showing {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of{" "}
+          {total}
         </span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => handlePageChange(currentPage - 1)}
             disabled={currentPage === 1}
             className={cn(
-              'p-1 rounded',
+              "p-1 rounded",
               currentPage === 1
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'hover:text-white hover:bg-gray-700 text-gray-400'
+                ? "text-gray-600 cursor-not-allowed"
+                : "hover:text-white hover:bg-gray-700 text-gray-400"
             )}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -245,10 +276,10 @@ export default function EmailList({
             onClick={() => handlePageChange(currentPage + 1)}
             disabled={currentPage >= totalPages}
             className={cn(
-              'p-1 rounded',
+              "p-1 rounded",
               currentPage >= totalPages
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'hover:text-white hover:bg-gray-700 text-gray-400'
+                ? "text-gray-600 cursor-not-allowed"
+                : "hover:text-white hover:bg-gray-700 text-gray-400"
             )}
           >
             <ChevronRight className="h-4 w-4" />

@@ -2,10 +2,10 @@ package usecase
 
 import (
 	"context"
-
 	authrepo "ga03-backend/internal/auth/repository"
 	emaildomain "ga03-backend/internal/email/domain"
 	"ga03-backend/internal/email/repository"
+	"mime/multipart"
 
 	"golang.org/x/oauth2"
 )
@@ -78,7 +78,7 @@ func (u *emailUsecase) GetMailboxByID(id string) (*emaildomain.Mailbox, error) {
 	return u.emailRepo.GetMailboxByID(id)
 }
 
-func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offset int) ([]*emaildomain.Email, int, error) {
+func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offset int, query string) ([]*emaildomain.Email, int, error) {
 	accessToken, refreshToken, err := u.getUserTokens(userID)
 	if err != nil {
 		return nil, 0, err
@@ -90,7 +90,21 @@ func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offse
 	}
 	
 	ctx := context.Background()
-	return u.mailProvider.GetEmails(ctx, accessToken, refreshToken, mailboxID, limit, offset, u.makeTokenUpdateCallback(userID))
+	return u.mailProvider.GetEmails(ctx, accessToken, refreshToken, mailboxID, limit, offset, query, u.makeTokenUpdateCallback(userID))
+}
+
+func (u *emailUsecase) GetAttachment(userID, messageID, attachmentID string) (*emaildomain.Attachment, []byte, error) {
+	accessToken, refreshToken, err := u.getUserTokens(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	
+	if accessToken == "" {
+		return nil, nil, nil // Not supported for local storage yet
+	}
+	
+	ctx := context.Background()
+	return u.mailProvider.GetAttachment(ctx, accessToken, refreshToken, messageID, attachmentID, u.makeTokenUpdateCallback(userID))
 }
 
 func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, error) {
@@ -131,6 +145,29 @@ func (u *emailUsecase) MarkEmailAsRead(userID, id string) error {
 	return u.mailProvider.MarkAsRead(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 }
 
+func (u *emailUsecase) MarkEmailAsUnread(userID, id string) error {
+	accessToken, refreshToken, err := u.getUserTokens(userID)
+	if err != nil {
+		return err
+	}
+	
+	if accessToken == "" {
+		// Fallback to local storage if no access token
+		email, err := u.emailRepo.GetEmailByID(id)
+		if err != nil {
+			return err
+		}
+		if email == nil {
+			return nil
+		}
+		email.IsRead = false
+		return u.emailRepo.UpdateEmail(email)
+	}
+	
+	ctx := context.Background()
+	return u.mailProvider.MarkAsUnread(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
+}
+
 func (u *emailUsecase) ToggleStar(userID, id string) error {
 	accessToken, refreshToken, err := u.getUserTokens(userID)
 	if err != nil {
@@ -154,19 +191,18 @@ func (u *emailUsecase) ToggleStar(userID, id string) error {
 	return u.mailProvider.ToggleStar(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 }
 
-func (u *emailUsecase) SendEmail(userID, to, subject, body string) error {
+func (u *emailUsecase) SendEmail(userID, to, subject, body string, files []*multipart.FileHeader) error {
 	accessToken, refreshToken, err := u.getUserTokens(userID)
 	if err != nil {
 		return err
 	}
 	
 	if accessToken == "" {
-		// Fallback to local storage (mock) - not implemented for sending
-		return nil
+		return nil // Not supported for local storage yet
 	}
 	
 	ctx := context.Background()
-	return u.mailProvider.SendEmail(ctx, accessToken, refreshToken, to, subject, body, u.makeTokenUpdateCallback(userID))
+	return u.mailProvider.SendEmail(ctx, accessToken, refreshToken, to, subject, body, files, u.makeTokenUpdateCallback(userID))
 }
 
 func (u *emailUsecase) TrashEmail(userID, id string) error {

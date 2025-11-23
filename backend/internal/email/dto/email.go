@@ -1,6 +1,9 @@
 package dto
 
-import emaildomain "ga03-backend/internal/email/domain"
+import (
+	emaildomain "ga03-backend/internal/email/domain"
+	"mime/multipart"
+)
 
 type MailboxesResponse struct {
 	Mailboxes []*emaildomain.Mailbox `json:"mailboxes"`
@@ -14,8 +17,9 @@ type EmailsResponse struct {
 }
 
 type SendEmailRequest struct {
-	To      string `json:"to" binding:"required,email"`
-	Subject string `json:"subject" binding:"required"`
-	Body    string `json:"body" binding:"required"`
+	To      string                  `form:"to" binding:"required,email"`
+	Subject string                  `form:"subject"`
+	Body    string                  `form:"body"`
+	Files   []*multipart.FileHeader `form:"files"`
 }
 

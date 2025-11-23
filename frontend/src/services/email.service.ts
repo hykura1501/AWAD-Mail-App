@@ -17,12 +17,13 @@ export const emailService = {
   getEmailsByMailbox: async (
     mailboxId: string,
     limit = 50,
-    offset = 0
+    offset = 0,
+    q = ""
   ): Promise<EmailsResponse> => {
     const response = await apiClient.get<EmailsResponse>(
       `/emails/mailboxes/${mailboxId}/emails`,
       {
-        params: { limit, offset },
+        params: { limit, offset, q },
       }
     );
     return response.data;
@@ -37,6 +38,10 @@ export const emailService = {
     await apiClient.patch(`/emails/${id}/read`);
   },
 
+  markAsUnread: async (id: string): Promise<void> => {
+    await apiClient.patch(`/emails/${id}/unread`);
+  },
+
   toggleStar: async (id: string): Promise<Email> => {
     const response = await apiClient.patch<Email>(`/emails/${id}/star`);
     return response.data;
@@ -45,9 +50,22 @@ export const emailService = {
   sendEmail: async (
     to: string,
     subject: string,
-    body: string
+    body: string,
+    files: File[] = []
   ): Promise<void> => {
-    await apiClient.post("/emails/send", { to, subject, body });
+    const formData = new FormData();
+    formData.append("to", to);
+    formData.append("subject", subject);
+    formData.append("body", body);
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    await apiClient.post("/emails/send", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
   },
 
   trashEmail: async (id: string): Promise<void> => {

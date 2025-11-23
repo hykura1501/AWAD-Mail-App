@@ -32,6 +32,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", result.RefreshToken, 7*24*3600, "/", "", true, true)
+	result.RefreshToken = ""
+
 	c.JSON(http.StatusOK, result)
 }
 
@@ -47,6 +51,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", result.RefreshToken, 7*24*3600, "/", "", true, true)
+	result.RefreshToken = ""
 
 	c.JSON(http.StatusOK, result)
 }
@@ -64,21 +72,36 @@ func (h *AuthHandler) GoogleSignIn(c *gin.Context) {
 		return
 	}
 
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", result.RefreshToken, 7*24*3600, "/", "", true, true)
+	result.RefreshToken = ""
+
 	c.JSON(http.StatusOK, result)
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
-	var req authdto.RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	refreshToken, err := c.Cookie("refresh_token")
+	if err != nil || refreshToken == "" {
+		var req authdto.RefreshTokenRequest
+		if err := c.ShouldBindJSON(&req); err == nil {
+			refreshToken = req.RefreshToken
+		}
+	}
+
+	if refreshToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "refresh token required"})
 		return
 	}
 
-	result, err := h.authUsecase.RefreshToken(req.RefreshToken)
+	result, err := h.authUsecase.RefreshToken(refreshToken)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", result.RefreshToken, 7*24*3600, "/", "", true, true)
+	result.RefreshToken = ""
 
 	c.JSON(http.StatusOK, result)
 }
@@ -95,16 +118,20 @@ func (h *AuthHandler) Me(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var req authdto.RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	refreshToken, err := c.Cookie("refresh_token")
+	if err != nil || refreshToken == "" {
+		var req authdto.RefreshTokenRequest
+		if err := c.ShouldBindJSON(&req); err == nil {
+			refreshToken = req.RefreshToken
+		}
 	}
 
-	if err := h.authUsecase.Logout(req.RefreshToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if refreshToken != "" {
+		_ = h.authUsecase.Logout(refreshToken)
 	}
+
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("refresh_token", "", -1, "/", "", true, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }

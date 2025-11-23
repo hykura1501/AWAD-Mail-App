@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import type { Email } from "@/types/email";
+import { API_BASE_URL } from "@/config/api";
+import { getAccessToken } from "@/lib/api-client";
 
 interface EmailDetailProps {
   emailId: string | null;
@@ -63,6 +65,14 @@ export default function EmailDetail({
     },
   });
 
+  const markAsUnreadMutation = useMutation({
+    mutationFn: emailService.markAsUnread,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["email", emailId] });
+      queryClient.invalidateQueries({ queryKey: ["emails"] });
+    },
+  });
+
   const handleToggleStar = () => {
     if (emailId) {
       toggleStarMutation.mutate(emailId);
@@ -85,6 +95,28 @@ export default function EmailDetail({
   const handleForward = () => {
     if (email && onForward) {
       onForward(email);
+    }
+  };
+
+  const handleDownloadAttachment = (attachmentId: string, filename: string) => {
+    if (!emailId) return;
+
+    // Construct download URL
+    const token = getAccessToken();
+    const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachmentId}?token=${token}`;
+
+    // Trigger download
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleMarkAsUnread = () => {
+    if (emailId) {
+      markAsUnreadMutation.mutate(emailId);
     }
   };
 
@@ -175,6 +207,19 @@ export default function EmailDetail({
           variant="ghost"
           size="sm"
           className="text-gray-300 hover:text-white hover:bg-gray-700"
+          onClick={() => onToggleStar(email.id)}
+          title={email.is_starred ? "Unstar" : "Star"}
+        >
+          {email.is_starred ? (
+            <Star className="h-4 w-4 text-yellow-400 fill-yellow-400" />
+          ) : (
+            <Star className="h-4 w-4" />
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-gray-300 hover:text-white hover:bg-gray-700"
         >
           <Reply className="h-4 w-4" />
         </Button>
@@ -211,6 +256,15 @@ export default function EmailDetail({
           title="Delete"
         >
           <Trash2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-gray-300 hover:text-white hover:bg-gray-700"
+          onClick={handleMarkAsUnread}
+          title="Mark as unread"
+        >
+          <Mail className="h-4 w-4" />
         </Button>
         <div className="flex-1" />
         <Button
@@ -281,6 +335,9 @@ export default function EmailDetail({
                       variant="ghost"
                       size="sm"
                       className="text-gray-400 hover:text-white hover:bg-gray-700"
+                      onClick={() =>
+                        handleDownloadAttachment(attachment.id, attachment.name)
+                      }
                     >
                       <Download className="h-4 w-4" />
                     </Button>
@@ -292,15 +349,19 @@ export default function EmailDetail({
         )}
 
         {/* Email Body */}
-        <div className="prose prose-invert max-w-none">
-          <div
-            className="text-gray-300 leading-relaxed"
-            dangerouslySetInnerHTML={{
-              __html: email.is_html
-                ? email.body
-                : `<pre class="whitespace-pre-wrap">${email.body}</pre>`,
-            }}
-          />
+        <div className="prose prose-invert max-w-none bg-white rounded-md p-4 text-black">
+          {email.is_html ? (
+            <iframe
+              srcDoc={email.body}
+              title="Email Content"
+              className="w-full min-h-[400px] border-none"
+              sandbox="allow-same-origin"
+            />
+          ) : (
+            <pre className="whitespace-pre-wrap font-sans text-gray-800">
+              {email.body}
+            </pre>
+          )}
         </div>
       </div>
 

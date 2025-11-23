@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAppDispatch } from "@/store/hooks";
-import { logout, setUser } from "@/store/authSlice";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
 import { getAccessToken } from "@/lib/api-client";
@@ -12,13 +12,13 @@ import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import { Button } from "@/components/ui/button";
 import { Bell, Settings, User, Menu, LogOut } from "lucide-react";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 
 export default function InboxPage() {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
-  // const user = useAppSelector((state) => state.auth.user);
+  const user = useAppSelector((state) => state.auth.user);
   const { mailbox, emailId } = useParams<{
     mailbox?: string;
     emailId?: string;
@@ -36,19 +36,8 @@ export default function InboxPage() {
   const selectedMailboxId = mailbox || "inbox";
   const selectedEmailId = emailId || null;
 
-  // Check authentication on mount if we have tokens
-  const hasRefreshToken = !!localStorage.getItem("refresh_token");
-  const { data: meData } = useQuery({
-    queryKey: ["auth", "me"],
-    queryFn: authService.getMe,
-    retry: false,
-    enabled: hasRefreshToken,
-  });
-
   useEffect(() => {
-    if (meData?.user) {
-      dispatch(setUser(meData.user));
-
+    if (user) {
       // Start watching for email updates
       emailService.watchMailbox().catch(console.error);
 
@@ -86,7 +75,7 @@ export default function InboxPage() {
         eventSource.close();
       };
     }
-  }, [meData, dispatch, queryClient]);
+  }, [user, queryClient]);
 
   const logoutMutation = useMutation({
     mutationFn: authService.logout,
@@ -178,7 +167,7 @@ export default function InboxPage() {
         {/* Desktop: 3-column layout */}
         <div className="hidden md:flex flex-1">
           {/* Column 1: Sidebar */}
-          <div className="w-64 min-w-[240px] bg-gray-800 border-r border-gray-700">
+          <div className="w-64 min-w-60 bg-gray-800 border-r border-gray-700">
             <MailboxList
               selectedMailboxId={selectedMailboxId}
               onSelectMailbox={handleSelectMailbox}

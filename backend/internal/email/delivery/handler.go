@@ -94,7 +94,9 @@ func (h *EmailHandler) GetEmailsByMailbox(c *gin.Context) {
 		}
 	}
 
-	emails, total, err := h.emailUsecase.GetEmailsByMailbox(userID, mailboxID, limit, offset)
+	query := c.Query("q")
+
+	emails, total, err := h.emailUsecase.GetEmailsByMailbox(userID, mailboxID, limit, offset, query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -167,6 +169,31 @@ func (h *EmailHandler) MarkAsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "email marked as read"})
 }
 
+func (h *EmailHandler) MarkAsUnread(c *gin.Context) {
+	id := c.Param("id")
+	
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	
+	userID := userData.ID
+	
+	if err := h.emailUsecase.MarkEmailAsUnread(userID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email marked as unread"})
+}
+
 func (h *EmailHandler) ToggleStar(c *gin.Context) {
 	id := c.Param("id")
 	
@@ -194,7 +221,7 @@ func (h *EmailHandler) ToggleStar(c *gin.Context) {
 
 func (h *EmailHandler) SendEmail(c *gin.Context) {
 	var req emaildto.SendEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -213,7 +240,7 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 	
 	userID := userData.ID
 
-	if err := h.emailUsecase.SendEmail(userID, req.To, req.Subject, req.Body); err != nil {
+	if err := h.emailUsecase.SendEmail(userID, req.To, req.Subject, req.Body, req.Files); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -298,5 +325,33 @@ func (h *EmailHandler) WatchMailbox(c *gin.Context) {
 
 	log.Printf("Successfully started watching mailbox for user: %s", userID)
 	c.JSON(http.StatusOK, gin.H{"message": "watch started"})
+}
+
+func (h *EmailHandler) GetAttachment(c *gin.Context) {
+	messageID := c.Param("id")
+	attachmentID := c.Param("attachmentId")
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	
+	userID := userData.ID
+
+	attachment, data, err := h.emailUsecase.GetAttachment(userID, messageID, attachmentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Header("Content-Disposition", "attachment; filename="+attachment.Name)
+	c.Data(http.StatusOK, attachment.MimeType, data)
 }
 

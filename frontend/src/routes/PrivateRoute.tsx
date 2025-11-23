@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { setUser } from '@/store/authSlice';
-import { authService } from '@/services/auth.service';
-import { useQuery } from '@tanstack/react-query';
-import { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
+import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { setUser, logout } from "@/store/authSlice";
+import { authService } from "@/services/auth.service";
+import { useQuery } from "@tanstack/react-query";
+import { getAccessToken, setAccessToken } from "@/lib/api-client";
 
 interface PrivateRouteProps {
   children: React.ReactNode;
@@ -14,83 +14,79 @@ export const PrivateRoute = ({ children }: PrivateRouteProps) => {
   const dispatch = useAppDispatch();
   const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
   const hasAccessToken = !!getAccessToken();
-  const hasRefreshToken = !!localStorage.getItem('refresh_token');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshFailed, setRefreshFailed] = useState(false);
-  const [canFetchProfile, setCanFetchProfile] = useState(hasAccessToken);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(!hasAccessToken);
+  const [authFailed, setAuthFailed] = useState(false);
+
+  // Listen for logout
+  useEffect(() => {
+    const channel = new BroadcastChannel("auth_channel");
+    channel.onmessage = (event) => {
+      if (event.data.type === "LOGOUT") {
+        dispatch(logout());
+        setAccessToken(null);
+        window.location.href = "/login";
+      }
+    };
+    return () => channel.close();
+  }, [dispatch]);
 
   useEffect(() => {
     let isMounted = true;
 
-    const attemptRefresh = async () => {
-      const refreshToken = localStorage.getItem('refresh_token');
-      if (!refreshToken) {
-        if (isMounted) {
-          setRefreshFailed(true);
-          setIsRefreshing(false);
-        }
+    const checkAuth = async () => {
+      if (hasAccessToken) {
+        setIsCheckingAuth(false);
         return;
       }
 
       try {
-        setIsRefreshing(true);
-        const response = await authService.refreshToken({ refresh_token: refreshToken });
+        const response = await authService.refreshToken({ refresh_token: "" });
         if (!isMounted) return;
-        dispatch(setUser(response.user));
-        setCanFetchProfile(true);
+
+        if (response.user) {
+          dispatch(setUser(response.user));
+        }
       } catch {
         if (!isMounted) return;
         setAccessToken(null);
-        setRefreshToken(null);
-        setRefreshFailed(true);
+        setAuthFailed(true);
       } finally {
         if (isMounted) {
-          setIsRefreshing(false);
+          setIsCheckingAuth(false);
         }
       }
     };
 
-    if (!hasAccessToken && hasRefreshToken) {
-      attemptRefresh();
-    } else {
-      setCanFetchProfile(hasAccessToken);
-    }
+    checkAuth();
 
     return () => {
       isMounted = false;
     };
-  }, [hasAccessToken, hasRefreshToken, dispatch]);
+  }, [dispatch, hasAccessToken]);
 
-  // Check authentication status
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['auth', 'me'],
+  const { data: meData, isError: meError } = useQuery({
+    queryKey: ["auth", "me"],
     queryFn: authService.getMe,
     retry: false,
-    enabled: canFetchProfile,
+    enabled: !!getAccessToken() && !isAuthenticated,
   });
 
   useEffect(() => {
-    if (data?.user) {
-      dispatch(setUser(data.user));
+    if (meData?.user) {
+      dispatch(setUser(meData.user));
     }
-  }, [data, dispatch]);
+  }, [meData, dispatch]);
 
-  // If no tokens at all, redirect immediately
-  if ((!hasRefreshToken && !hasAccessToken) || refreshFailed) {
+  if (authFailed || (meError && !isCheckingAuth)) {
     return <Navigate to="/login" replace />;
   }
 
-  if (!canFetchProfile || isRefreshing || (canFetchProfile && isLoading)) {
+  if (isCheckingAuth) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-900">
         <div className="text-white">Loading...</div>
       </div>
     );
-  }
-
-  // If error or no user data, redirect to login
-  if (isError || (!data?.user && !isAuthenticated)) {
-    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
