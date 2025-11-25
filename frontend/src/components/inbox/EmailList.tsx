@@ -20,7 +20,6 @@ export default function EmailList({
   mailboxId,
   selectedEmailId,
   onSelectEmail,
-  onToggleStar,
 }: EmailListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
