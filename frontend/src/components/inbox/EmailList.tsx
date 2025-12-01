@@ -46,7 +46,7 @@ export default function EmailList({
     }
   }, [cacheKey, mailboxId]);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["emails", mailboxId, offset, debouncedSearchQuery],
     queryFn: async () => {
       const result = await emailService.getEmailsByMailbox(
@@ -74,6 +74,7 @@ export default function EmailList({
     setCurrentPage(1);
     setSearchQuery("");
     setSelectedIds(new Set());
+    setCachedData(null);
   }, [mailboxId]);
 
   const handlePageChange = (newPage: number) => {
@@ -117,15 +118,32 @@ export default function EmailList({
       toast.error("Làm mới thất bại", { id: toastId });
     }
   };
-  
+
   const toggleStarMutation = useMutation({
     mutationFn: emailService.toggleStar,
-    onSuccess: () => {
+    onSuccess: (_, emailId) => {
+      // Update UI immediately after successful response from backend
+      queryClient.setQueryData(
+        ["emails", mailboxId, offset, debouncedSearchQuery],
+        (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            emails: old.emails.map((email: Email) =>
+              email.id === emailId
+                ? { ...email, is_starred: !email.is_starred }
+                : email
+            ),
+          };
+        }
+      );
+
+      // Refetch in background to ensure sync with server
       queryClient.invalidateQueries({ queryKey: ["emails"] });
     },
     onError: () => {
       toast.error("Failed to toggle star status.");
-    }
+    },
   });
 
   const getTimeDisplay = (date: string) => {
@@ -158,7 +176,7 @@ export default function EmailList({
     );
   }
 
-  if (isLoading) {
+  if (isLoading || (isFetching && !data)) {
     return (
       <div className="w-full h-full bg-white dark:bg-[#111418]">
         <div className="p-4 space-y-2">
@@ -330,17 +348,28 @@ export default function EmailList({
                     e.stopPropagation();
                     toggleStarMutation.mutate(email.id);
                   }}
+                  disabled={
+                    toggleStarMutation.isPending &&
+                    toggleStarMutation.variables === email.id
+                  }
                 >
-                  <span
-                    className={cn(
-                      "material-symbols-outlined text-[10px]  [font-variation-settings:'wght'_300]",
-                      email.is_starred
-                        ? "filled text-yellow-400"
-                        : "text-gray-400 dark:text-gray-500"
-                    )}
-                  >
-                    star
-                  </span>
+                  {toggleStarMutation.isPending &&
+                  toggleStarMutation.variables === email.id ? (
+                    <span className="material-symbols-outlined text-[10px] text-gray-400 dark:text-gray-500 animate-spin">
+                      progress_activity
+                    </span>
+                  ) : (
+                    <span
+                      className={cn(
+                        "material-symbols-outlined text-[10px]  [font-variation-settings:'wght'_300]",
+                        email.is_starred
+                          ? "filled text-yellow-400"
+                          : "text-gray-400 dark:text-gray-500"
+                      )}
+                    >
+                      star
+                    </span>
+                  )}
                 </button>
               </div>
             );
