@@ -20,7 +20,6 @@ interface EmailDetailProps {
 
 export default function EmailDetail({
   emailId,
-  onToggleStar,
   onReply,
   onReplyAll,
   onForward,
