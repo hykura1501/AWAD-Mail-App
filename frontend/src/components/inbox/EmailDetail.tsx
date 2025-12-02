@@ -1,12 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
 import { format } from "date-fns";
-import type { Email, Attachment } from "@/types/email";
+import type { Email, Attachment, EmailsResponse } from "@/types/email";
 import { API_BASE_URL } from "@/config/api";
 import { getAccessToken } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useAppSelector } from "@/store/hooks";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 interface EmailDetailProps {
   emailId: string | null;
@@ -19,7 +20,6 @@ interface EmailDetailProps {
 
 export default function EmailDetail({
   emailId,
-  onToggleStar,
   onReply,
   onReplyAll,
   onForward,
@@ -36,35 +36,109 @@ export default function EmailDetail({
 
   const toggleStarMutation = useMutation({
     mutationFn: emailService.toggleStar,
+    onMutate: async () => {
+      // Cancel outgoing queries to prevent overwriting optimistic update
+      await queryClient.cancelQueries({ queryKey: ["email", emailId] });
+      await queryClient.cancelQueries({ queryKey: ["emails"] });
+      
+      const previousEmail = queryClient.getQueryData<Email>(["email", emailId]);
+
+      // Update email detail cache
+      if (previousEmail) {
+        queryClient.setQueryData<Email>(["email", emailId], {
+          ...previousEmail,
+          is_starred: !previousEmail.is_starred,
+        });
+      }
+
+      // Update all email list caches
+      queryClient.setQueriesData<EmailsResponse>(
+        { queryKey: ["emails"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            emails: old.emails.map((email: Email) =>
+              email.id === emailId
+                ? { ...email, is_starred: !email.is_starred }
+                : email
+            ),
+          };
+        }
+      );
+
+      return { previousEmail };
+    },
     onSuccess: () => {
+      toast.success("Đã cập nhật trạng thái đánh dấu sao");
+    },
+    onError: (_err, _variables, context) => {
+      // Restore previous data on error
+      if (context?.previousEmail) {
+        queryClient.setQueryData(["email", emailId], context.previousEmail);
+      }
+      toast.error("Không thể cập nhật trạng thái đánh dấu sao");
+      // Refetch all to restore correct state
       queryClient.invalidateQueries({ queryKey: ["email", emailId] });
       queryClient.invalidateQueries({ queryKey: ["emails"] });
     },
-    onError: () => {
-      toast.error("Failed to toggle star status.");
-    }
+    // Don't use onSettled - let the optimistic update persist
   });
 
   const trashMutation = useMutation({
     mutationFn: emailService.trashEmail,
-    onSuccess: () => {
+    onMutate: () => {
+      const toastId = toast.success("Đã chuyển vào thùng rác");
+      return { toastId };
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
+      toast.error("Không thể chuyển vào thùng rác");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["emails"] });
     },
-    onError: () => {
-      toast.error("Failed to move email to trash.");
-    }
   });
 
   const archiveMutation = useMutation({
     mutationFn: emailService.archiveEmail,
-    onSuccess: () => {
+    onMutate: () => {
+      const toastId = toast.success("Đã lưu trữ hội thoại");
+      return { toastId };
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
+      toast.error("Lưu trữ thất bại");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["emails"] });
     },
   });
 
   const markAsUnreadMutation = useMutation({
     mutationFn: emailService.markAsUnread,
-    onSuccess: () => {
+    onMutate: async () => {
+      const toastId = toast.success("Đã đánh dấu là chưa đọc");
+      await queryClient.cancelQueries({ queryKey: ["email", emailId] });
+      const previousEmail = queryClient.getQueryData<Email>(["email", emailId]);
+
+      if (previousEmail) {
+        queryClient.setQueryData<Email>(["email", emailId], {
+          ...previousEmail,
+          is_read: false,
+        });
+      }
+
+      return { previousEmail, toastId };
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
+      if (context?.previousEmail) {
+        queryClient.setQueryData(["email", emailId], context.previousEmail);
+      }
+      toast.error("Không thể đánh dấu là chưa đọc");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["email", emailId] });
       queryClient.invalidateQueries({ queryKey: ["emails"] });
     },
@@ -73,7 +147,7 @@ export default function EmailDetail({
   const handleToggleStar = () => {
     if (emailId) {
       toggleStarMutation.mutate(emailId);
-      onToggleStar(emailId);
+      // Don't call onToggleStar - mutation handles all cache updates
     }
   };
 
@@ -118,16 +192,24 @@ export default function EmailDetail({
     filename: string
   ) => {
     if (!emailId) return;
-    const token = getAccessToken();
-    const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachmentId}?token=${token}`;
+    
+    try {
+      const token = getAccessToken();
+      const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachmentId}?token=${token}`;
 
-    // Trigger download
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      // Trigger download
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success(`Đang tải xuống ${filename}`);
+    } catch (error) {
+      console.error("Download failed:", error);
+      toast.error("Không thể tải xuống tệp đính kèm");
+    }
   };
 
   const processEmailBody = (body: string, attachments?: Attachment[]) => {
@@ -233,68 +315,89 @@ export default function EmailDetail({
           </h2>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-0.5">
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Trả lời"
                 onClick={handleReply}
+                disabled={!onReply}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px]  [font-variation-settings:'wght'_300]">
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
                   reply
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Trả lời tất cả"
                 onClick={handleReplyAll}
+                disabled={!onReplyAll}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px] [font-variation-settings:'wght'_300]">
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
                   reply_all
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Chuyển tiếp"
                 onClick={handleForward}
+                disabled={!onForward}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px] [font-variation-settings:'wght'_300]">
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
                   forward
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Lưu trữ"
                 onClick={handleArchive}
+                disabled={archiveMutation.isPending}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px]  [font-variation-settings:'wght'_300]">
-                  archive
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
+                  {archiveMutation.isPending ? "progress_activity" : "archive"}
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Đánh dấu chưa đọc"
                 onClick={handleMarkAsUnread}
+                disabled={markAsUnreadMutation.isPending}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px] [font-variation-settings:'wght'_300]">
-                  mark_email_unread
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
+                  {markAsUnreadMutation.isPending ? "progress_activity" : "mark_email_unread"}
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Xóa"
                 onClick={handleTrash}
+                disabled={trashMutation.isPending}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px] [font-variation-settings:'wght'_300]">
-                  delete
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
+                  {trashMutation.isPending ? "progress_activity" : "delete"}
                 </span>
-              </button>
-              <button
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                 title="Thêm"
+                onClick={() => toast.info("Tính năng đang phát triển")}
               >
-                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[16px] [font-variation-settings:'wght'_300]">
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
                   more_vert
                 </span>
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -346,37 +449,47 @@ export default function EmailDetail({
                   <span className="hidden md:block">
                     {getTimeDisplay(email.received_at)}
                   </span>
-                  <button
-                    className="p-1 rounded-full hover:bg-gray-100"
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
                     title="Bật/tắt dấu sao"
                     onClick={handleToggleStar}
+                    disabled={toggleStarMutation.isPending}
                   >
                     <span
                       className={cn(
                         "material-symbols-outlined text-[18px]",
+                        toggleStarMutation.isPending && "animate-spin",
                         email.is_starred ? "filled text-yellow-400" : ""
                       )}
                     >
-                      star
+                      {toggleStarMutation.isPending ? "progress_activity" : "star"}
                     </span>
-                  </button>
-                  <button
-                    className="p-1 rounded-full hover:bg-gray-100"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
                     title="Trả lời"
                     onClick={handleReply}
+                    disabled={!onReply}
                   >
                     <span className="material-symbols-outlined text-[18px]">
                       reply
                     </span>
-                  </button>
-                  <button
-                    className="p-1 rounded-full hover:bg-gray-100"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
                     title="Khác"
+                    onClick={() => toast.info("Tính năng đang phát triển")}
                   >
                     <span className="material-symbols-outlined text-[18px]">
                       more_vert
                     </span>
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -387,6 +500,7 @@ export default function EmailDetail({
             {email.is_html ? (
               <iframe
                 srcDoc={`
+                  <base target="_blank" />
                   <style>
                     body {
                       background-color: ${
@@ -407,7 +521,7 @@ export default function EmailDetail({
                 `}
                 title="Email Content"
                 className="w-full border-none bg-transparent overflow-hidden"
-                sandbox="allow-same-origin"
+                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                 style={{ minHeight: "100px" }}
                 onLoad={(e) => {
                   const iframe = e.currentTarget;
@@ -460,8 +574,10 @@ export default function EmailDetail({
                           {formatFileSize(attachment.size)}
                         </p>
                       </div>
-                      <button
-                        className="p-1.5 rounded-full hover:bg-gray-200"
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-full hover:bg-gray-200"
                         title="Tải xuống"
                         onClick={() =>
                           handleDownloadAttachment(
@@ -473,7 +589,7 @@ export default function EmailDetail({
                         <span className="material-symbols-outlined text-gray-500 text-[18px]">
                           download
                         </span>
-                      </button>
+                      </Button>
                     </div>
                   );
                 })}
@@ -483,29 +599,35 @@ export default function EmailDetail({
 
           {/* Action Buttons (Moved inside content) */}
           <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-            <button
+            <Button
               onClick={handleReply}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900"
+              variant="secondary"
+              className="gap-2 px-3 py-1.5 h-auto text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900 shadow-none border-none"
+              disabled={!onReply}
             >
               <span className="material-symbols-outlined text-sm">reply</span>
               Trả lời
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={handleReplyAll}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900"
+              variant="secondary"
+              className="gap-2 px-3 py-1.5 h-auto text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900 shadow-none border-none"
+              disabled={!onReplyAll}
             >
               <span className="material-symbols-outlined text-sm">
                 reply_all
               </span>
               Trả lời tất cả
-            </button>
-            <button
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900"
+            </Button>
+            <Button
+              className="gap-2 px-3 py-1.5 h-auto text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-900 shadow-none border-none"
               onClick={handleForward}
+              variant="secondary"
+              disabled={!onForward}
             >
               <span className="material-symbols-outlined text-sm">forward</span>
               Chuyển tiếp
-            </button>
+            </Button>
           </div>
         </div>
       </div>

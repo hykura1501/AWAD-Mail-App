@@ -4,6 +4,8 @@ import { useAppSelector } from "@/store/hooks";
 import { emailService } from "@/services/email.service";
 import type { Mailbox } from "@/types/email";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 interface MailboxListProps {
   selectedMailboxId: string | null;
@@ -138,9 +140,10 @@ export default function MailboxList({
     <aside className="flex h-full w-full flex-col bg-gray-50 dark:bg-[#111418] p-3 shrink-0 transition-colors duration-200">
       {/* User Profile & Menu */}
       <div className="relative shrink-0" ref={menuRef}>
-        <button
+        <Button
+          variant="ghost"
           onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-          className="flex items-center justify-between gap-2 w-full hover:bg-gray-200 dark:hover:bg-white/5 p-1.5 rounded-lg transition-colors text-left group"
+          className="flex items-center justify-between gap-2 w-full hover:bg-gray-200 dark:hover:bg-white/5 p-1.5 h-auto rounded-lg transition-colors text-left group shadow-none"
         >
           <div className="flex items-center gap-2 min-w-0">
             <div
@@ -152,7 +155,7 @@ export default function MailboxList({
                 }")`,
               }}
             ></div>
-            <div className="flex flex-col min-w-0">
+            <div className="flex flex-col min-w-0 items-start">
               <h1 className="text-gray-900 dark:text-white text-sm font-medium leading-normal truncate">
                 Email Client AI
               </h1>
@@ -164,34 +167,40 @@ export default function MailboxList({
           <span className="material-symbols-outlined text-gray-500 group-hover:text-gray-900 dark:group-hover:text-white transition-colors text-lg">
             expand_more
           </span>
-        </button>
+        </Button>
 
         {/* Dropdown Menu */}
         {isUserMenuOpen && (
           <div className="absolute top-full left-0 w-full mt-1 bg-white dark:bg-[#283039] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-            <button
+            <Button
+              variant="ghost"
               onClick={onToggleTheme}
-              className="w-full px-3 py-2 text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm"
+              className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
             >
               <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
                 {theme === "dark" ? "light_mode" : "dark_mode"}
               </span>
               <span>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</span>
-            </button>
-            <button className="w-full px-3 py-2 text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm">
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => toast.info("Tính năng đang phát triển")}
+              className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
+            >
               <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
                 settings
               </span>
               <span>Cài đặt</span>
-            </button>
+            </Button>
             <div className="h-px bg-gray-200 dark:bg-gray-700 mx-2"></div>
-            <button
+            <Button
+              variant="ghost"
               onClick={onLogout}
-              className="w-full px-3 py-2 text-left text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm"
+              className="w-full px-3 py-2 justify-start h-auto text-left text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
             >
               <span className="material-symbols-outlined text-lg">logout</span>
               <span>Đăng xuất</span>
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -204,13 +213,14 @@ export default function MailboxList({
           const label = getMailboxLabel(mailbox.type, mailbox.name);
 
           return (
-            <button
+            <Button
+              variant="ghost"
               key={mailbox.id}
               onClick={() => onSelectMailbox(mailbox.id)}
               className={cn(
-                "flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left",
+                "flex items-center justify-between gap-2 px-2.5 py-1.5 h-auto rounded-lg text-left cursor-pointer",
                 isSelected
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                  ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40"
                   : "hover:bg-gray-100 dark:hover:bg-white/5 text-black dark:text-gray-300"
               )}
             >
@@ -239,20 +249,20 @@ export default function MailboxList({
                   {mailbox.count}
                 </span>
               )}
-            </button>
+            </Button>
           );
         })}
       </div>
 
       {/* Compose Button */}
       <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800 shrink-0">
-        <button
+        <Button
           onClick={onComposeClick}
-          className="flex w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg h-9 px-3 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-blue-600 transition-colors shadow-lg shadow-blue-900/20"
+          className="w-full cursor-pointer justify-center overflow-hidden rounded-lg h-9 px-3 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-blue-600 transition-colors shadow-lg shadow-blue-900/20"
         >
           <span className="material-symbols-outlined mr-2 text-lg">edit</span>
           <span className="truncate">Soạn thư</span>
-        </button>
+        </Button>
       </div>
     </aside>
   );

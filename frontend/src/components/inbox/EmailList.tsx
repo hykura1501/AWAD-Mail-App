@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
 import { getFromCache, saveToCache } from "@/lib/db";
-import type { Email } from "@/types/email";
+import type { Email, EmailsResponse } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 interface EmailListProps {
   mailboxId: string | null;
@@ -24,7 +25,7 @@ export default function EmailList({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [cachedData, setCachedData] = useState<any>(null);
+  const [cachedData, setCachedData] = useState<EmailsResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -59,7 +60,7 @@ export default function EmailList({
       return result;
     },
     enabled: !!mailboxId,
-    placeholderData: cachedData,
+    placeholderData: cachedData ?? undefined,
   });
 
   const emails = data?.emails || [];
@@ -69,12 +70,19 @@ export default function EmailList({
   // Client-side filtering is no longer needed as we do server-side search
   const filteredEmails = emails;
 
-  // Reset to page 1 when mailbox changes
+  // Reset state when mailbox changes
+  const prevMailboxIdRef = useRef(mailboxId);
   useEffect(() => {
-    setCurrentPage(1);
-    setSearchQuery("");
-    setSelectedIds(new Set());
-    setCachedData(null);
+    if (prevMailboxIdRef.current !== mailboxId) {
+      prevMailboxIdRef.current = mailboxId;
+      // Use setTimeout to avoid setState during render
+      setTimeout(() => {
+        setCurrentPage(1);
+        setSearchQuery("");
+        setSelectedIds(new Set());
+        setCachedData(null);
+      }, 0);
+    }
   }, [mailboxId]);
 
   const handlePageChange = (newPage: number) => {
@@ -114,18 +122,24 @@ export default function EmailList({
       } else {
         toast.success("Đã làm mới hộp thư", { id: toastId });
       }
-    } catch (error) {
+    } catch {
       toast.error("Làm mới thất bại", { id: toastId });
     }
   };
 
   const toggleStarMutation = useMutation({
     mutationFn: emailService.toggleStar,
-    onSuccess: (_, emailId) => {
-      // Update UI immediately after successful response from backend
-      queryClient.setQueryData(
-        ["emails", mailboxId, offset, debouncedSearchQuery],
-        (old: any) => {
+    onMutate: async (emailId) => {
+      // Cancel outgoing queries to prevent overwriting optimistic update
+      await queryClient.cancelQueries({ queryKey: ["emails"] });
+      await queryClient.cancelQueries({ queryKey: ["email", emailId] });
+      
+      const previousData = queryClient.getQueryData(["emails", mailboxId, offset, debouncedSearchQuery]);
+
+      // Update all email list caches (including current page)
+      queryClient.setQueriesData<EmailsResponse>(
+        { queryKey: ["emails"] },
+        (old) => {
           if (!old) return old;
           return {
             ...old,
@@ -138,12 +152,34 @@ export default function EmailList({
         }
       );
 
-      // Refetch in background to ensure sync with server
+      // Update email detail cache
+      queryClient.setQueryData<Email>(
+        ["email", emailId],
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            is_starred: !old.is_starred,
+          };
+        }
+      );
+
+      return { previousData, emailId };
+    },
+    onError: (_err, emailId, context) => {
+      // Restore previous data on error
+      if (context?.previousData) {
+        queryClient.setQueryData(
+          ["emails", mailboxId, offset, debouncedSearchQuery],
+          context.previousData
+        );
+      }
+      toast.error("Không thể cập nhật trạng thái đánh dấu sao");
+      // Refetch all to restore correct state
       queryClient.invalidateQueries({ queryKey: ["emails"] });
+      queryClient.invalidateQueries({ queryKey: ["email", emailId] });
     },
-    onError: () => {
-      toast.error("Failed to toggle star status.");
-    },
+    // Don't use onSettled - let the optimistic update persist
   });
 
   const getTimeDisplay = (date: string) => {
@@ -221,33 +257,43 @@ export default function EmailList({
             }
             onChange={handleSelectAll}
           />
-          <button
-            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039] [font-variation-settings:'wght'_300]"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039]"
             title="Làm mới"
             onClick={handleRefreshClick}
           >
             <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[20px]">
               refresh
             </span>
-          </button>
+          </Button>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039]"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039]"
             title="Đánh dấu đã đọc"
+            onClick={() => toast.info("Tính năng đang phát triển")}
+            disabled={selectedIds.size === 0}
           >
             <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[20px]">
               mark_email_read
             </span>
-          </button>
-          <button
-            className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039]"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-lg hover:bg-gray-100 dark:hover:bg-[#283039]"
             title="Xóa"
+            onClick={() => toast.info("Tính năng đang phát triển")}
+            disabled={selectedIds.size === 0}
           >
             <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-[20px]">
               delete
             </span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -268,6 +314,9 @@ export default function EmailList({
             const isSelected = selectedEmailId === email.id;
             const isChecked = selectedIds.has(email.id);
             const showCheckbox = selectedIds.size > 0;
+            
+            // Check if this email is being toggled
+            const isTogglingThis = toggleStarMutation.isPending && toggleStarMutation.variables === email.id;
 
             return (
               <div
@@ -341,27 +390,25 @@ export default function EmailList({
                     {email.preview}
                   </p>
                 </div>
-                <button
-                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 ml-1 shrink-0"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full hover:bg-gray-200 dark:hover:bg-white/10 ml-1 shrink-0"
                   title="Bật/tắt dấu sao"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleStarMutation.mutate(email.id);
                   }}
-                  disabled={
-                    toggleStarMutation.isPending &&
-                    toggleStarMutation.variables === email.id
-                  }
+                  disabled={isTogglingThis}
                 >
-                  {toggleStarMutation.isPending &&
-                  toggleStarMutation.variables === email.id ? (
-                    <span className="material-symbols-outlined text-[10px] text-gray-400 dark:text-gray-500 animate-spin">
+                  {isTogglingThis ? (
+                    <span className="material-symbols-outlined text-[18px] text-gray-400 dark:text-gray-500 animate-spin">
                       progress_activity
                     </span>
                   ) : (
                     <span
                       className={cn(
-                        "material-symbols-outlined text-[10px]  [font-variation-settings:'wght'_300]",
+                        "material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]",
                         email.is_starred
                           ? "filled text-yellow-400"
                           : "text-gray-400 dark:text-gray-500"
@@ -370,7 +417,7 @@ export default function EmailList({
                       star
                     </span>
                   )}
-                </button>
+                </Button>
               </div>
             );
           })
@@ -383,37 +430,31 @@ export default function EmailList({
           {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
         </span>
         <div className="flex items-center gap-1">
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => handlePageChange(currentPage - 1)}
             disabled={currentPage === 1}
-            className={cn(
-              "p-1 rounded",
-              currentPage === 1
-                ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                : "hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
-            )}
+            className="h-8 w-8 rounded"
           >
             <span className="material-symbols-outlined text-lg">
               chevron_left
             </span>
-          </button>
+          </Button>
           <span className="px-1">
             {currentPage}/{totalPages}
           </span>
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => handlePageChange(currentPage + 1)}
             disabled={currentPage >= totalPages}
-            className={cn(
-              "p-1 rounded",
-              currentPage >= totalPages
-                ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                : "hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
-            )}
+            className="h-8 w-8 rounded"
           >
             <span className="material-symbols-outlined text-lg">
               chevron_right
             </span>
-          </button>
+          </Button>
         </div>
       </div>
     </div>

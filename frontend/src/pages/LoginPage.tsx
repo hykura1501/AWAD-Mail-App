@@ -14,6 +14,7 @@ import { GOOGLE_CLIENT_ID } from '@/config/api';
 import { useState } from 'react';
 import { Mail, AlertCircle } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
+import { toast } from 'sonner';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -38,12 +39,15 @@ export default function LoginPage() {
   const loginMutation = useMutation({
     mutationFn: authService.login,
     onSuccess: (data) => {
+      toast.success('Đăng nhập thành công!');
       dispatch(setUser(data.user));
       navigate('/inbox');
     },
     onError: (err: unknown) => {
       const error = err as { response?: { data?: { error?: string } } };
-      setError(error.response?.data?.error || 'Invalid email or password. Please try again.');
+      const errorMessage = error.response?.data?.error || 'Email hoặc mật khẩu không đúng. Vui lòng thử lại.';
+      setError(errorMessage);
+      toast.error(errorMessage);
     },
   });
 
@@ -56,24 +60,27 @@ export default function LoginPage() {
     flow: 'auth-code',
     onSuccess: async (codeResponse) => {
       setError(null);
+      const loadingToast = toast.loading('Đang đăng nhập với Google...');
       try {
         console.log("Google Sign-In response:", codeResponse);
         const data = await authService.googleSignIn({ 
           code: codeResponse.code, 
           scope: codeResponse.scope ? codeResponse.scope.split(' ') : []
         });
+        toast.success('Đăng nhập thành công!', { id: loadingToast });
         dispatch(setUser(data.user));
         navigate("/inbox");
       } catch (err: unknown) {
         const error = err as { response?: { data?: { error?: string } } };
-        setError(
-          error.response?.data?.error ||
-            "Google sign-in failed. Please try again."
-        );
+        const errorMessage = error.response?.data?.error || "Đăng nhập Google thất bại. Vui lòng thử lại.";
+        setError(errorMessage);
+        toast.error(errorMessage, { id: loadingToast });
       }
     },
     onError: () => {
-      setError("Google sign-in failed. Please try again.");
+      const errorMessage = "Đăng nhập Google thất bại. Vui lòng thử lại.";
+      setError(errorMessage);
+      toast.error(errorMessage);
     },
     scope:
       "email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",

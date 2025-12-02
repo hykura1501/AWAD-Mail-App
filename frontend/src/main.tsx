@@ -15,6 +15,10 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
+      staleTime: 30000, // 30 seconds
+    },
+    mutations: {
+      retry: 0,
     },
   },
 });
@@ -25,7 +29,12 @@ createRoot(document.getElementById("root")!).render(
       <QueryClientProvider client={queryClient}>
         <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
           <RouterProvider router={router} />
-          <Toaster position="bottom-right" />
+          <Toaster 
+            position="bottom-right" 
+            richColors 
+            closeButton 
+            duration={3000}
+          />
         </GoogleOAuthProvider>
       </QueryClientProvider>
     </Provider>

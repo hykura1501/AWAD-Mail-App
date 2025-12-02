@@ -12,6 +12,7 @@ import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/config/api";
+import { Button } from "@/components/ui/button";
 
 export default function InboxPage() {
   const navigate = useNavigate();
@@ -34,26 +35,24 @@ export default function InboxPage() {
   });
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("theme") as "light" | "dark") || "light";
+      const savedTheme = localStorage.getItem("theme");
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
+      const initialTheme = (savedTheme as "light" | "dark") || systemTheme;
+      
+      // Apply theme immediately on mount
+      if (initialTheme === "dark") {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+      
+      return initialTheme;
     }
     return "light";
   });
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("theme");
-    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-      .matches
-      ? "dark"
-      : "light";
-    const initialTheme = (savedTheme as "light" | "dark") || systemTheme;
-
-    setTheme(initialTheme);
-    if (initialTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, []);
 
   const toggleTheme = () => {
     const newTheme = theme === "light" ? "dark" : "light";
@@ -84,19 +83,42 @@ export default function InboxPage() {
         }
       );
 
+      let lastMutationTime = 0;
+      
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === "email_update") {
             console.log("Received email update:", data.payload);
-            // Invalidate queries to refresh lists
-            queryClient.invalidateQueries({ queryKey: ["emails"] });
-            queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+            
+            // Ignore SSE updates for 3 seconds after user actions to prevent conflicts
+            const timeSinceLastMutation = Date.now() - lastMutationTime;
+            if (timeSinceLastMutation < 3000) {
+              console.log("Ignoring SSE update - recent user action");
+              return;
+            }
+            
+            // Only invalidate for new emails or external changes
+            queryClient.invalidateQueries({ 
+              queryKey: ["emails"],
+              refetchType: 'none'
+            });
+            queryClient.invalidateQueries({ 
+              queryKey: ["mailboxes"],
+              refetchType: 'none'
+            });
           }
         } catch (error) {
           console.error("Error parsing SSE message:", error);
         }
       };
+      
+      // Track mutation time to debounce SSE updates
+      const unsubscribe = queryClient.getMutationCache().subscribe((event) => {
+        if (event?.type === 'updated' && event.mutation.state.status === 'pending') {
+          lastMutationTime = Date.now();
+        }
+      });
 
       eventSource.onerror = (error) => {
         console.error("SSE error:", error);
@@ -105,6 +127,7 @@ export default function InboxPage() {
 
       return () => {
         eventSource.close();
+        unsubscribe();
       };
     }
   }, [user, queryClient]);
@@ -134,7 +157,8 @@ export default function InboxPage() {
   };
 
   const handleToggleStar = () => {
-    queryClient.invalidateQueries({ queryKey: ["emails"] });
+    // Do nothing - let the mutation handle cache updates
+    // This callback is kept for backward compatibility but no longer invalidates
   };
 
   const handleForward = (email: Email) => {
@@ -295,12 +319,14 @@ export default function InboxPage() {
       <div className="md:hidden flex-1 flex flex-col w-full h-full relative">
         {/* Mobile Header */}
         <div className="h-14 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 bg-white dark:bg-[#111418] shrink-0">
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setIsMobileMenuOpen(true)}
-            className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10"
+            className="-ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10"
           >
             <span className="material-symbols-outlined">menu</span>
-          </button>
+          </Button>
           <span className="font-bold text-lg">MailApp</span>
           <div className="w-10"></div> {/* Spacer */}
         </div>
@@ -310,12 +336,14 @@ export default function InboxPage() {
           <div className="absolute inset-0 z-50 bg-white dark:bg-[#111418] flex flex-col">
             <div className="h-14 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0">
               <span className="font-bold text-lg">Menu</span>
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10"
+                className="-mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/10"
               >
                 <span className="material-symbols-outlined">close</span>
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto">
               <MailboxList
@@ -345,16 +373,17 @@ export default function InboxPage() {
           ) : (
             <div className="absolute inset-0 flex flex-col bg-white dark:bg-[#111418]">
               <div className="h-12 border-b border-gray-200 dark:border-gray-800 flex items-center px-2 shrink-0">
-                <button
+                <Button
+                  variant="ghost"
                   onClick={() => {
                     navigate(`/${selectedMailboxId}`);
                     setMobileView("list");
                   }}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300"
+                  className="flex items-center gap-1 px-2 py-1 h-auto rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300"
                 >
                   <span className="material-symbols-outlined">arrow_back</span>
                   <span>Back</span>
-                </button>
+                </Button>
               </div>
               <div className="flex-1 overflow-hidden">
                 <EmailDetail
