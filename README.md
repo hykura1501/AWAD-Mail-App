@@ -2,8 +2,7 @@
 
 **Public URLs:**
 - **Frontend (Vercel):** https://g04-react-email-client.vercel.app/
-- **Frontend (Render):** https://g04-react-email-client.onrender.com/
-- **Backend:** (If deployed, add backend public URL here. If not, backend runs locally as per instructions below.)
+- **Backend (Render):** https://g04-react-email-client.onrender.com/
 - **Monorepo:** https://github.com/PhanPhuc269/G04-React-Email-Client
 
 ---
