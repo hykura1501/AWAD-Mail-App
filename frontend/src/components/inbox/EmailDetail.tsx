@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAppSelector } from "@/store/hooks";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import StarIcon from "@/assets/star.svg?react";
 
 interface EmailDetailProps {
     emailId: string | null;
@@ -485,15 +486,20 @@ export default function EmailDetail({
                                         onClick={handleToggleStar}
                                         disabled={toggleStarMutation.isPending}
                                     >
-                    <span
-                        className={cn(
-                            "material-symbols-outlined text-[18px]",
-                            toggleStarMutation.isPending && "animate-spin",
-                            email.is_starred ? "filled text-yellow-400" : ""
-                        )}
-                    >
-                      {toggleStarMutation.isPending ? "progress_activity" : "star"}
-                    </span>
+                                        {toggleStarMutation.isPending ? (
+                                            <span className="material-symbols-outlined text-[18px] text-gray-400 dark:text-gray-500 animate-spin">
+                                                progress_activity
+                                            </span>
+                                        ) : (
+                                            <StarIcon
+                                                className={cn(
+                                                    "size-7 cursor-pointer",
+                                                    email.is_starred
+                                                        ? "text-yellow-400 fill-yellow-400"
+                                                        : "text-gray-400 fill-gray-400 dark:text-gray-500 dark:fill-gray-500"
+                                                )}
+                                            />
+                                        )}
                                     </Button>
                                     <Button
                                         variant="ghost"

@@ -1,5 +1,13 @@
 # React Authentication + Email Dashboard
 
+**Public URLs:**
+- **Frontend (Vercel):** https://g04-react-email-client.vercel.app/
+- **Frontend (Render):** https://g04-react-email-client.onrender.com/
+- **Backend:** (If deployed, add backend public URL here. If not, backend runs locally as per instructions below.)
+- **Monorepo:** https://github.com/PhanPhuc269/G04-React-Email-Client
+
+---
+
 A full-stack application implementing secure authentication (Email/Password + Google Sign-In) with a 3-column email dashboard mockup.
 
 ## Features
@@ -141,12 +149,28 @@ The frontend will start on `http://localhost:5173`
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select an existing one
-3. Enable the Google+ API
+3. Enable the **Google+ API** (or **Google People API** if Google+ is deprecated)
 4. Create OAuth 2.0 credentials:
-   - Application type: Web application
-   - Authorized JavaScript origins: `http://localhost:5173` (for development)
-   - Authorized redirect URIs: `http://localhost:8080/api/auth/google/callback`
-5. Copy the Client ID and Client Secret to your `.env` files
+   - Application type: **Web application**
+   - **Authorized JavaScript origins**:
+     - `http://localhost:5173` (for local development)
+     - `https://g04-react-email-client.vercel.app` (for Vercel deployment)
+     - `https://g04-react-email-client.onrender.com` (for Render deployment)
+   - **Authorized redirect URIs**:
+     - `http://localhost:8080/api/auth/google/callback` (for local backend)
+     - `[YOUR_BACKEND_PUBLIC_URL]/api/auth/google/callback` (for deployed backend, if applicable)
+5. Copy the **Client ID** and **Client Secret** to your `.env` files in both backend and frontend as shown above.
+
+### IMAP Test Accounts
+
+> **Note:** This project does **not** use real IMAP accounts. The backend provides a mock email API with realistic sample data. No IMAP setup is required.
+
+### Simulating Token Expiry (for Demo)
+
+To demonstrate token refresh and expiry handling:
+- **Option 1:** In your backend `.env`, set `JWT_ACCESS_EXPIRY` to a short value (e.g., `30s` or `1m`). Restart the backend. Login, then wait for the access token to expire and observe the automatic refresh.
+- **Option 2:** Use browser dev tools to manually remove or edit the access token in memory (if accessible) to simulate expiry.
+- **Option 3:** Temporarily modify the backend code to force token expiry for testing purposes.
 
 ## Token Storage Strategy
 
@@ -359,4 +383,3 @@ This project is created for educational purposes.
 ## Author
 
 Created as part of the AWDA GA03 assignment.
-
