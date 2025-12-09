@@ -42,7 +42,7 @@ func (s *notifyTokenSource) Token() (*oauth2.Token, error) {
 	}
 	if s.callback != nil && s.current.AccessToken != t.AccessToken {
 		s.current = t
-		// Execute callback in background to not block the request? 
+		// Execute callback in background to not block the request?
 		// Better to block to ensure consistency, or at least log error.
 		if err := s.callback(t); err != nil {
 			fmt.Printf("Failed to update token: %v\n", err)
@@ -78,7 +78,7 @@ func (s *Service) GetGmailService(ctx context.Context, accessToken, refreshToken
 	}
 
 	tokenSource := config.TokenSource(ctx, token)
-	
+
 	// Wrap token source to detect refreshes
 	wrappedSource := &notifyTokenSource{
 		src:      tokenSource,
@@ -119,7 +119,7 @@ func (s *Service) GetMailboxes(ctx context.Context, accessToken, refreshToken st
 			if label.Type == "system" {
 				mailboxType = strings.ToLower(label.Name)
 			}
-			
+
 			mailbox := &emaildomain.Mailbox{
 				ID:    label.Id,
 				Name:  label.Name,
@@ -141,10 +141,10 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 	}
 
 	user := "me"
-	
+
 	// Build query
 	query := srv.Users.Messages.List(user)
-	
+
 	q := ""
 	if labelID != "" && labelID != "ALL" {
 		q += "label:" + labelID + " "
@@ -152,7 +152,7 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 	if queryStr != "" {
 		q += queryStr
 	}
-	
+
 	if q != "" {
 		query = query.Q(q)
 	}
@@ -166,13 +166,13 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 			if toSkip > 500 {
 				toSkip = 500
 			}
-			
+
 			// Just fetch IDs to skip
 			resp, err := srv.Users.Messages.List(user).Q(q).MaxResults(int64(toSkip)).PageToken(pageToken).Do()
 			if err != nil {
 				return nil, 0, fmt.Errorf("unable to skip messages: %v", err)
 			}
-			
+
 			skipped += len(resp.Messages)
 			pageToken = resp.NextPageToken
 			if pageToken == "" {
@@ -215,7 +215,7 @@ func (s *Service) GetAttachment(ctx context.Context, accessToken, refreshToken, 
 	}
 
 	user := "me"
-	
+
 	// Fetch message to get attachment metadata
 	msg, err := srv.Users.Messages.Get(user, messageID).Format("full").Do()
 	if err != nil {
@@ -257,7 +257,6 @@ func (s *Service) GetAttachment(ctx context.Context, accessToken, refreshToken, 
 		Size:     int64(len(data)),
 	}, data, nil
 }
-
 
 // GetEmailByID retrieves a specific email by ID
 func (s *Service) GetEmailByID(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) (*emaildomain.Email, error) {
@@ -323,7 +322,7 @@ func (s *Service) ToggleStar(ctx context.Context, accessToken, refreshToken, ema
 	}
 
 	user := "me"
-	
+
 	// Get current message to check star status
 	msg, err := srv.Users.Messages.Get(user, emailID).Format("minimal").Do()
 	if err != nil {
@@ -365,7 +364,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 	}
 
 	user := "me"
-	
+
 	var emailMsg bytes.Buffer
 	boundary := "foo_bar_baz"
 
@@ -412,7 +411,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 		emailMsg.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", file.Header.Get("Content-Type"), file.Filename))
 		emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n")
 		emailMsg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", file.Filename))
-		
+
 		// Split base64 into lines of 76 characters
 		for i := 0; i < len(encodedContent); i += 76 {
 			end := i + 76
@@ -530,14 +529,14 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 	if idx := strings.Index(from, "<"); idx > 0 {
 		fromName = strings.TrimSpace(from[:idx])
 	}
-	
+
 	// Convert To header to array
 	toHeader := getHeader(msg.Payload.Headers, "To")
 	toArray := []string{}
 	if toHeader != "" {
 		toArray = []string{toHeader}
 	}
-	
+
 	body, isHTML := getEmailBody(msg.Payload)
 	preview := body
 
@@ -560,22 +559,22 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 	if len(preview) > 200 {
 		preview = preview[:200] + "..."
 	}
-	
+
 	attachments := getAttachments(msg.Payload)
 
 	email := &emaildomain.Email{
-		ID:         msg.Id,
-		Subject:    getHeader(msg.Payload.Headers, "Subject"),
-		From:       from,
-		FromName:   fromName,
-		To:         toArray,
-		Preview:    preview,
-		Body:       body,
-		IsHTML:     isHTML,
-		ReceivedAt: time.Unix(msg.InternalDate/1000, 0),
-		IsRead:     !hasLabel(msg.LabelIds, "UNREAD"),
-		IsStarred:  hasLabel(msg.LabelIds, "STARRED"),
-		MailboxID:  getMailboxID(msg.LabelIds),
+		ID:          msg.Id,
+		Subject:     getHeader(msg.Payload.Headers, "Subject"),
+		From:        from,
+		FromName:    fromName,
+		To:          toArray,
+		Preview:     preview,
+		Body:        body,
+		IsHTML:      isHTML,
+		ReceivedAt:  time.Unix(msg.InternalDate/1000, 0),
+		IsRead:      !hasLabel(msg.LabelIds, "UNREAD"),
+		IsStarred:   hasLabel(msg.LabelIds, "STARRED"),
+		MailboxID:   getMailboxID(msg.LabelIds),
 		Attachments: attachments,
 	}
 
@@ -621,7 +620,7 @@ func getEmailBody(payload *gmail.MessagePart) (string, bool) {
 					}
 				}
 			}
-			
+
 			if len(part.Parts) > 0 {
 				findBody(part.Parts)
 			}
@@ -654,7 +653,7 @@ func getAttachments(payload *gmail.MessagePart) []emaildomain.Attachment {
 					ContentID: contentID,
 				})
 			}
-			
+
 			if len(part.Parts) > 0 {
 				findAttachments(part.Parts)
 			}
@@ -664,7 +663,6 @@ func getAttachments(payload *gmail.MessagePart) []emaildomain.Attachment {
 	findAttachments(payload.Parts)
 	return attachments
 }
-
 
 func hasLabel(labels []string, labelID string) bool {
 	for _, label := range labels {
@@ -678,35 +676,35 @@ func hasLabel(labels []string, labelID string) bool {
 func getMailboxID(labels []string) string {
 	// Priority order for mailbox labels
 	priority := []string{"INBOX", "SENT", "DRAFT", "SPAM", "TRASH"}
-	
+
 	for _, p := range priority {
 		if hasLabel(labels, p) {
 			return p
 		}
 	}
-	
+
 	// Return first label if no priority match
 	if len(labels) > 0 {
 		return labels[0]
 	}
-	
+
 	return "INBOX"
 }
 
 func getIconForLabel(name string) string {
 	iconMap := map[string]string{
-		"INBOX":     "inbox",
-		"SENT":      "send",
-		"DRAFT":     "file-text",
-		"STARRED":   "star",
-		"SPAM":      "alert-circle",
-		"TRASH":     "trash-2",
-		"IMPORTANT": "bookmark",
-		"CATEGORY_PERSONAL": "user",
-		"CATEGORY_SOCIAL":   "users",
+		"INBOX":               "inbox",
+		"SENT":                "send",
+		"DRAFT":               "file-text",
+		"STARRED":             "star",
+		"SPAM":                "alert-circle",
+		"TRASH":               "trash-2",
+		"IMPORTANT":           "bookmark",
+		"CATEGORY_PERSONAL":   "user",
+		"CATEGORY_SOCIAL":     "users",
 		"CATEGORY_PROMOTIONS": "tag",
-		"CATEGORY_UPDATES":  "bell",
-		"CATEGORY_FORUMS":   "message-square",
+		"CATEGORY_UPDATES":    "bell",
+		"CATEGORY_FORUMS":     "message-square",
 	}
 
 	upperName := strings.ToUpper(name)

@@ -3,6 +3,7 @@ import { PrivateRoute } from './PrivateRoute';
 import LoginPage from '@/pages/LoginPage';
 import SignUpPage from '@/pages/SignUpPage';
 import InboxPage from '@/pages/InboxPage';
+import KanbanPage from '@/pages/KanbanPage';
 
 export const router = createBrowserRouter([
   {
@@ -12,6 +13,14 @@ export const router = createBrowserRouter([
   {
     path: '/signup',
     element: <SignUpPage />,
+  },
+  {
+    path: '/kanban',
+    element: (
+      <PrivateRoute>
+        <KanbanPage />
+      </PrivateRoute>
+    ),
   },
   {
     path: '/',
