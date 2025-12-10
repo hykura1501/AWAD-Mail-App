@@ -55,7 +55,7 @@ export default function LoginPage() {
   } = useForm<ImapLoginFormData>({
     resolver: zodResolver(imapLoginSchema),
     defaultValues: {
-      imapPort: "993",
+      imapPort: 993,
     },
   });
 
@@ -268,7 +268,7 @@ export default function LoginPage() {
               </form>
             ) : (
               <form
-                onSubmit={handleSubmitImap(onSubmitImap)}
+                onSubmit={handleSubmitImap(onSubmitImap as any)}
                 className="space-y-5"
               >
                 <div className="space-y-2">
