@@ -60,16 +60,33 @@ func (u *emailUsecase) SummarizeEmail(ctx context.Context, emailID string) (stri
 		}
 	}
 
-	var email *emaildomain.Email
-	var err error
-	accessToken, refreshToken, _ := u.getUserTokens(userID)
-	if accessToken != "" && u.mailProvider != nil {
-		// Lấy email từ Gmail API
-		email, err = u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
-	} else {
-		// Fallback mock
-		email, err = u.emailRepo.GetEmailByID(emailID)
+	user, err := u.userRepo.FindByID(userID)
+	if err != nil {
+		return "", err
 	}
+	if user == nil {
+		return "", fmt.Errorf("user not found")
+	}
+
+	var email *emaildomain.Email
+
+	if user.Provider == "imap" {
+		decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to decrypt password: %w", err)
+		}
+		email, err = u.imapProvider.GetEmailByID(ctx, user.ImapServer, user.ImapPort, user.Email, decryptedPass, emailID)
+	} else {
+		accessToken, refreshToken, _ := u.getUserTokens(userID)
+		if accessToken != "" && u.mailProvider != nil {
+			// Lấy email từ Gmail API
+			email, err = u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+		} else {
+			// Fallback mock
+			email, err = u.emailRepo.GetEmailByID(emailID)
+		}
+	}
+
 	if err != nil || email == nil {
 		return "", fmt.Errorf("Email not found")
 	}

@@ -271,7 +271,7 @@ func (s *IMAPService) GetEmails(ctx context.Context, server string, port int, em
 		return nil, 0, err
 	}
 
-	mbox, err := c.Select(realMailboxName, false)
+	mbox, err := c.Select(realMailboxName, true)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -301,7 +301,7 @@ func (s *IMAPService) GetEmails(ctx context.Context, server string, port int, em
 	messages := make(chan *imap.Message, limit)
 	done := make(chan error, 1)
 	
-	section := &imap.BodySectionName{}
+	section := &imap.BodySectionName{Peek: true}
 	items := []imap.FetchItem{imap.FetchEnvelope, imap.FetchFlags, imap.FetchInternalDate, imap.FetchUid, section.FetchItem()}
 
 	go func() {
