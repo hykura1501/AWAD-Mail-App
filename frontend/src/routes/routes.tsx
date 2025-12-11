@@ -5,6 +5,8 @@ import SignUpPage from "@/pages/SignUpPage";
 import InboxPage from "@/pages/InboxPage";
 import KanbanPage from "@/pages/KanbanPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
+import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
+import TermsOfServicePage from "@/pages/TermsOfServicePage";
 
 export const router = createBrowserRouter([
   {
@@ -54,6 +56,14 @@ export const router = createBrowserRouter([
         <InboxPage />
       </PrivateRoute>
     ),
+  },
+  {
+    path: "/privacy-policy",
+    element: <PrivacyPolicyPage />,
+  },
+  {
+    path: "/terms-of-service",
+    element: <TermsOfServicePage />,
   },
   {
     path: "*",
