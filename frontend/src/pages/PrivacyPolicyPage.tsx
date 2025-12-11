@@ -196,7 +196,7 @@ const PrivacyPolicyPage: React.FC = () => {
           </p>
           <ul className="list-none text-gray-700 space-y-2 ml-4">
             <li>
-              <strong>Email:</strong> privacy@awadmail.com
+              <strong>Email:</strong> phanhongphuc26094@gmail.com
             </li>
             <li>
               <strong>Address:</strong> HCMC, Vietnam
