@@ -22,6 +22,10 @@ interface ComposeEmailProps {
   initialCc?: string[];
   initialSubject?: string;
   initialBody?: string;
+  /** Original email HTML content to be quoted (rendered in iframe to preserve styles) */
+  quotedContent?: string;
+  /** Header for quoted content (e.g., "On Dec 14, John wrote:") */
+  quotedHeader?: string;
 }
 
 const modules = {
@@ -51,6 +55,16 @@ const formats = [
   "indent",
   "link",
   "image",
+  // Additional formats to preserve original email HTML/CSS when replying/forwarding
+  "align",
+  "color",
+  "background",
+  "direction",
+  "font",
+  "size",
+  "script",
+  "code-block",
+  "code",
 ];
 
 export default function ComposeEmail({
@@ -60,6 +74,8 @@ export default function ComposeEmail({
   initialCc = [],
   initialSubject = "",
   initialBody = "",
+  quotedContent = "",
+  quotedHeader = "",
 }: ComposeEmailProps) {
   const queryClient = useQueryClient();
   const [to, setTo] = useState<string[]>([]);
@@ -74,6 +90,9 @@ export default function ComposeEmail({
   const [body, setBody] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isMinimized, setIsMinimized] = useState(false);
+  // Store the quoted HTML content separately to preserve original email formatting
+  const [quotedHtml, setQuotedHtml] = useState("");
+  const [quotedHeaderText, setQuotedHeaderText] = useState("");
 
   // Track previous open state to detect transitions
   const prevOpen = useRef(open);
@@ -81,7 +100,7 @@ export default function ComposeEmail({
   useEffect(() => {
     // Dialog just opened - load initial data
     if (open && !prevOpen.current) {
-      if (initialTo.length > 0 || initialCc.length > 0 || initialSubject || initialBody) {
+      if (initialTo.length > 0 || initialCc.length > 0 || initialSubject || initialBody || quotedContent) {
         // Use setTimeout to avoid setState during render
         setTimeout(() => {
           setTo(initialTo);
@@ -89,6 +108,9 @@ export default function ComposeEmail({
           if (initialCc.length > 0) setShowCc(true);
           setSubject(initialSubject);
           setBody(initialBody);
+          // Store quoted content separately to preserve HTML/CSS
+          setQuotedHtml(quotedContent);
+          setQuotedHeaderText(quotedHeader);
         }, 0);
       }
     }
@@ -107,11 +129,13 @@ export default function ComposeEmail({
         setShowCc(false);
         setShowBcc(false);
         setIsMinimized(false);
+        setQuotedHtml("");
+        setQuotedHeaderText("");
       }, 0);
     }
     
     prevOpen.current = open;
-  }, [open, initialTo, initialCc, initialSubject, initialBody]);
+  }, [open, initialTo, initialCc, initialSubject, initialBody, quotedContent, quotedHeader]);
 
   const sendMutation = useMutation({
     mutationFn: async () => {
@@ -131,10 +155,19 @@ export default function ComposeEmail({
 
       // Inject styles into blockquote tags before sending to ensure they appear correctly in the recipient's email
       // ReactQuill might strip these styles during editing
-      const processedBody = body.replace(
+      let processedBody = body.replace(
         /<blockquote>/g,
         '<blockquote style="margin: 0 0 0 0.8ex; border-left: 1px #ccc solid; padding-left: 1ex;">'
       );
+
+      // Combine the new message body with the quoted original email content
+      // The quoted content preserves the original email's HTML/CSS formatting
+      if (quotedHtml) {
+        const quoteWrapper = quotedHeaderText
+          ? `<br><br><div class="gmail_quote"><div class="gmail_attr">${quotedHeaderText}</div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${quotedHtml}</blockquote></div>`
+          : `<br><br><div class="gmail_quote"><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${quotedHtml}</blockquote></div>`;
+        processedBody = processedBody + quoteWrapper;
+      }
 
       await emailService.sendEmail(
         allTo.join(", "),
@@ -464,7 +497,7 @@ export default function ComposeEmail({
               </DialogHeader>
 
               {/* Message Body */}
-              <div className="flex-1 flex flex-col min-h-0 bg-white">
+              <div className="flex-1 flex flex-col min-h-0 bg-white overflow-y-auto">
                 <ReactQuill
                   theme="snow"
                   value={body}
@@ -472,8 +505,52 @@ export default function ComposeEmail({
                   modules={modules}
                   formats={formats}
                   placeholder="Write your message here..."
-                  className="flex-1 flex flex-col min-h-0 [&_.ql-container]:flex-1 [&_.ql-container]:overflow-y-auto [&_.ql-container]:text-base [&_.ql-editor]:text-gray-900 [&_.ql-toolbar]:border-gray-200 [&_.ql-container]:border-none [&_.ql-toolbar]:bg-gray-50 [&_.ql-stroke]:stroke-gray-500  [&_.ql-fill]:fill-gray-500 [&_.ql-picker]:text-gray-500"
+                  className={cn(
+                    "flex flex-col",
+                    quotedHtml 
+                      ? "[&_.ql-container]:min-h-[120px]" 
+                      : "flex-1 min-h-0 [&_.ql-container]:flex-1",
+                    "[&_.ql-container]:overflow-y-auto [&_.ql-container]:text-base [&_.ql-editor]:text-gray-900 [&_.ql-toolbar]:border-gray-200 [&_.ql-container]:border-none [&_.ql-toolbar]:bg-gray-50 [&_.ql-stroke]:stroke-gray-500 [&_.ql-fill]:fill-gray-500 [&_.ql-picker]:text-gray-500"
+                  )}
                 />
+                
+                {/* Quoted Original Email Content - rendered in iframe to preserve HTML/CSS */}
+                {quotedHtml && (
+                  <div className="flex-1 flex flex-col min-h-0 border-t border-gray-200 px-4 py-2 bg-gray-50">
+                    {quotedHeaderText && (
+                      <p className="text-xs text-gray-500 mb-2 shrink-0">{quotedHeaderText}</p>
+                    )}
+                    <div className="flex-1 min-h-0 border-l-2 border-gray-300 pl-3 overflow-hidden">
+                      <iframe
+                        srcDoc={`
+                          <!DOCTYPE html>
+                          <html>
+                          <head>
+                            <base target="_blank" />
+                            <style>
+                              body {
+                                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                                font-size: 14px;
+                                line-height: 1.5;
+                                color: #374151;
+                                margin: 0;
+                                padding: 0;
+                                background: transparent;
+                              }
+                              a { color: #2563eb; }
+                              img { max-width: 100%; height: auto; }
+                            </style>
+                          </head>
+                          <body>${quotedHtml}</body>
+                          </html>
+                        `}
+                        title="Quoted Email Content"
+                        className="w-full h-full border-none bg-transparent"
+                        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Attachments */}

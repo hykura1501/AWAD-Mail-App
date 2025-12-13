@@ -30,6 +30,8 @@ export default function InboxPage() {
     cc: [] as string[],
     subject: "",
     body: "",
+    quotedContent: "",
+    quotedHeader: "",
   });
   const [mobileView, setMobileView] = useState<"mailbox" | "list" | "detail">(
     "list"
@@ -164,17 +166,16 @@ export default function InboxPage() {
   };
 
   const handleForward = (email: Email) => {
+    const originalBody = email.body || email.preview || "";
+    const forwardHeader = `---------- Forwarded message ---------\nFrom: ${email.from}\nDate: ${new Date(email.received_at).toLocaleString()}\nSubject: ${email.subject}\nTo: ${email.to.join(", ")}`;
+    
     setComposeInitialData({
       to: [],
       cc: [],
       subject: `Fwd: ${email.subject}`,
-      body: `<br><br>---------- Forwarded message ---------<br>From: ${
-        email.from
-      }<br>Date: ${new Date(email.received_at).toLocaleString()}<br>Subject: ${
-        email.subject
-      }<br>To: ${email.to.join(", ")}<br><br>${
-        email.body || email.preview || ""
-      }`,
+      body: "",
+      quotedContent: originalBody,
+      quotedHeader: forwardHeader,
     });
     setIsComposeOpen(true);
   };
@@ -206,15 +207,18 @@ export default function InboxPage() {
       }
     }
 
-    const senderHtml = `${senderName} &lt;<a href="mailto:${senderEmail}">${senderEmail}</a>&gt;`;
+    const senderHtml = `${senderName} <${senderEmail}>`;
 
+    const originalBody = email.body || email.preview || "";
+    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
+    
     setComposeInitialData({
       to: [senderEmail],
       cc: [],
       subject: `Re: ${email.subject}`,
-      body: `<div dir="ltr"><br></div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">${dateStr} ${senderHtml} đã viết:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${
-        email.body || email.preview || ""
-      }</blockquote></div>`,
+      body: "",
+      quotedContent: originalBody,
+      quotedHeader: quoteHeader,
     });
     setIsComposeOpen(true);
   };
@@ -246,7 +250,7 @@ export default function InboxPage() {
       }
     }
 
-    const senderHtml = `${senderName} &lt;<a href="mailto:${senderEmail}">${senderEmail}</a>&gt;`;
+    const senderHtml = `${senderName} <${senderEmail}>`;
 
     // Calculate CC list
     // CC = (Original To + Original CC) - (Me + Sender)
@@ -267,13 +271,16 @@ export default function InboxPage() {
     // Remove duplicates
     const uniqueCcList = [...new Set(ccList)];
 
+    const originalBody = email.body || email.preview || "";
+    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
+    
     setComposeInitialData({
       to: [senderEmail],
       cc: uniqueCcList,
       subject: `Re: ${email.subject}`,
-      body: `<div dir="ltr"><br></div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">${dateStr} ${senderHtml} đã viết:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${
-        email.body || email.preview || ""
-      }</blockquote></div>`,
+      body: "",
+      quotedContent: originalBody,
+      quotedHeader: quoteHeader,
     });
     setIsComposeOpen(true);
   };
@@ -452,12 +459,14 @@ export default function InboxPage() {
         onOpenChange={(open) => {
           setIsComposeOpen(open);
           if (!open)
-            setComposeInitialData({ to: [], cc: [], subject: "", body: "" });
+            setComposeInitialData({ to: [], cc: [], subject: "", body: "", quotedContent: "", quotedHeader: "" });
         }}
         initialTo={composeInitialData.to}
         initialCc={composeInitialData.cc}
         initialSubject={composeInitialData.subject}
         initialBody={composeInitialData.body}
+        quotedContent={composeInitialData.quotedContent}
+        quotedHeader={composeInitialData.quotedHeader}
       />
     </div>
   );
