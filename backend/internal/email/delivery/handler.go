@@ -483,3 +483,51 @@ func (h *EmailHandler) GetEmailsByStatus(c *gin.Context) {
 		Total:  total,
 	})
 }
+
+// GET /emails/search?q=query
+// FuzzySearch handles fuzzy search over emails
+func (h *EmailHandler) FuzzySearch(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing search query parameter 'q'"})
+		return
+	}
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	userID := userData.ID
+
+	limit := 50
+	offset := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	emails, total, err := h.emailUsecase.FuzzySearch(userID, query, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, emaildto.EmailsResponse{
+		Emails: emails,
+		Limit:  limit,
+		Offset: offset,
+		Total:  total,
+	})
+}

@@ -7,9 +7,11 @@ import (
 	emaildomain "ga03-backend/internal/email/domain"
 	"ga03-backend/internal/email/repository"
 	"ga03-backend/pkg/config"
+	"ga03-backend/pkg/fuzzy"
 	"ga03-backend/pkg/imap"
 	"ga03-backend/pkg/utils/crypto"
 	"mime/multipart"
+	"sort"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -614,4 +616,90 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		}
 	}
 	return filtered, total, nil
+}
+
+// FuzzySearch performs fuzzy search over emails
+// It searches subject, from, from_name fields with typo tolerance and partial matching
+// Results are ranked by relevance score (best matches first)
+func (u *emailUsecase) FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error) {
+	user, err := u.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if user == nil {
+		return nil, 0, fmt.Errorf("user not found")
+	}
+
+	var allEmails []*emaildomain.Email
+
+	// Fetch more emails for better search results (we'll filter and paginate later)
+	fetchLimit := 200
+
+	if user.Provider == "imap" {
+		decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to decrypt password: %w", err)
+		}
+		allEmails, _, err = u.imapProvider.GetEmails(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, "INBOX", fetchLimit, 0)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		accessToken, refreshToken, err := u.getUserTokens(userID)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if accessToken == "" {
+			// Fallback to local storage
+			allEmails, _, err = u.emailRepo.GetEmailsByMailbox("INBOX", fetchLimit, 0)
+			if err != nil {
+				return nil, 0, err
+			}
+		} else {
+			ctx := context.Background()
+			allEmails, _, err = u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", fetchLimit, 0, "", u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+
+	// Apply fuzzy matching and calculate relevance scores
+	type scoredEmail struct {
+		email *emaildomain.Email
+		score float64
+	}
+
+	var matchedEmails []scoredEmail
+	for _, email := range allEmails {
+		if fuzzy.FuzzyMatchEmail(query, email.Subject, email.From, email.FromName, email.Preview) {
+			score := fuzzy.CalculateRelevanceScore(query, email.Subject, email.From, email.FromName)
+			matchedEmails = append(matchedEmails, scoredEmail{email: email, score: score})
+		}
+	}
+
+	// Sort by relevance score (highest first)
+	sort.Slice(matchedEmails, func(i, j int) bool {
+		return matchedEmails[i].score > matchedEmails[j].score
+	})
+
+	total := len(matchedEmails)
+
+	// Apply pagination
+	start := offset
+	if start > len(matchedEmails) {
+		start = len(matchedEmails)
+	}
+	end := start + limit
+	if end > len(matchedEmails) {
+		end = len(matchedEmails)
+	}
+
+	result := make([]*emaildomain.Email, 0, end-start)
+	for i := start; i < end; i++ {
+		result = append(result, matchedEmails[i].email)
+	}
+
+	return result, total, nil
 }

@@ -25,6 +25,7 @@ type EmailUsecase interface {
 	SummarizeEmail(ctx context.Context, emailID string) (string, error)
 	MoveEmailToMailbox(userID, emailID, mailboxID string) error
 	SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error
+	FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
 	SetGeminiService(svc interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	})

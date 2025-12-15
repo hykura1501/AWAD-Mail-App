@@ -56,6 +56,7 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			emails.POST("/:id/trash", emailHandler.TrashEmail)
 			emails.POST("/:id/archive", emailHandler.ArchiveEmail)
 			emails.POST("/watch", emailHandler.WatchMailbox)
+			emails.GET("/search", emailHandler.FuzzySearch)
 		}
 	}
 }

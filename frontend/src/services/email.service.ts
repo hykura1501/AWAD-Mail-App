@@ -115,4 +115,15 @@ export const emailService = {
   watchMailbox: async (): Promise<void> => {
     await apiClient.post("/emails/watch");
   },
+
+  fuzzySearch: async (
+    query: string,
+    limit = 50,
+    offset = 0
+  ): Promise<EmailsResponse> => {
+    const response = await apiClient.get<EmailsResponse>("/emails/search", {
+      params: { q: query, limit, offset },
+    });
+    return response.data;
+  },
 };

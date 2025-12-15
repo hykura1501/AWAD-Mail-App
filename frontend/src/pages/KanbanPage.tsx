@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
@@ -14,6 +14,7 @@ import { API_BASE_URL } from "@/config/api";
 import KanbanBoard from "@/components/kanban/KanbanBoard";
 import type { KanbanColumn } from "@/components/kanban/KanbanBoard";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
+import KanbanFilters, { type SortOption, type FilterState } from "@/components/kanban/KanbanFilters";
 import { SnoozeDialog } from "@/components/inbox/SnoozeDialog";
 
 export default function KanbanPage() {
@@ -155,6 +156,31 @@ export default function KanbanPage() {
     done: [] as Email[],
     snoozed: [] as Email[],
   });
+
+  // Sorting and filtering state
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
+  const [filters, setFilters] = useState<FilterState>({
+    unreadOnly: false,
+    withAttachments: false,
+  });
+
+  // Helper function to sort emails
+  const sortEmails = (emails: Email[], sort: SortOption): Email[] => {
+    return [...emails].sort((a, b) => {
+      const dateA = new Date(a.received_at).getTime();
+      const dateB = new Date(b.received_at).getTime();
+      return sort === "newest" ? dateB - dateA : dateA - dateB;
+    });
+  };
+
+  // Helper function to filter emails
+  const filterEmails = (emails: Email[], filterState: FilterState): Email[] => {
+    return emails.filter((email) => {
+      if (filterState.unreadOnly && email.is_read) return false;
+      if (filterState.withAttachments && (!email.attachments || email.attachments.length === 0)) return false;
+      return true;
+    });
+  };
 
   // Query từng cột
   const {
@@ -346,36 +372,45 @@ export default function KanbanPage() {
   const isAnyLoading =
     isLoadingInbox || isLoadingTodo || isLoadingDone || isLoadingSnoozed;
 
-  const kanbanColumns: KanbanColumn[] = [
-    {
-      id: "inbox",
-      title: "Inbox",
-      emails: kanbanEmails.inbox,
-      offset: kanbanOffsets.inbox,
-      limit,
-    },
-    {
-      id: "todo",
-      title: "To Do",
-      emails: kanbanEmails.todo,
-      offset: kanbanOffsets.todo,
-      limit,
-    },
-    {
-      id: "done",
-      title: "Done",
-      emails: kanbanEmails.done,
-      offset: kanbanOffsets.done,
-      limit,
-    },
-    {
-      id: "snoozed",
-      title: "Snoozed",
-      emails: kanbanEmails.snoozed,
-      offset: kanbanOffsets.snoozed,
-      limit,
-    },
-  ];
+  // Apply sorting and filtering to columns using useMemo for performance
+  const kanbanColumns: KanbanColumn[] = useMemo(() => {
+    const processEmails = (emails: Email[]) => {
+      let result = filterEmails(emails, filters);
+      result = sortEmails(result, sortBy);
+      return result;
+    };
+
+    return [
+      {
+        id: "inbox",
+        title: "Inbox",
+        emails: processEmails(kanbanEmails.inbox),
+        offset: kanbanOffsets.inbox,
+        limit,
+      },
+      {
+        id: "todo",
+        title: "To Do",
+        emails: processEmails(kanbanEmails.todo),
+        offset: kanbanOffsets.todo,
+        limit,
+      },
+      {
+        id: "done",
+        title: "Done",
+        emails: processEmails(kanbanEmails.done),
+        offset: kanbanOffsets.done,
+        limit,
+      },
+      {
+        id: "snoozed",
+        title: "Snoozed",
+        emails: processEmails(kanbanEmails.snoozed),
+        offset: kanbanOffsets.snoozed,
+        limit,
+      },
+    ];
+  }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit]);
 
   useEffect(() => {
     if (user) {
@@ -465,6 +500,16 @@ export default function KanbanPage() {
           </span>
         </div>
         <KanbanToggle isKanban={true} onToggle={() => navigate("/inbox")} />
+      </div>
+
+      {/* Filter Bar */}
+      <div className="hidden lg:block">
+        <KanbanFilters
+          sortBy={sortBy}
+          onSortChange={setSortBy}
+          filters={filters}
+          onFilterChange={setFilters}
+        />
       </div>
 
       {/* Main Content */}

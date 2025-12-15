@@ -10,7 +10,9 @@ import MailboxList from "@/components/inbox/MailboxList";
 import EmailList from "@/components/inbox/EmailList";
 import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import SearchBar from "@/components/search/SearchBar";
+import SearchResultsView from "@/components/search/SearchResultsView";
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/config/api";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
 
@@ -36,6 +38,9 @@ export default function InboxPage() {
   const [mobileView, setMobileView] = useState<"mailbox" | "list" | "detail">(
     "list"
   );
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchMode, setIsSearchMode] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
       const savedTheme = localStorage.getItem("theme");
@@ -71,6 +76,32 @@ export default function InboxPage() {
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
   const selectedEmailId = emailId || null;
+
+  // Fuzzy search query
+  const {
+    data: searchResults,
+    isLoading: isSearching,
+    error: searchError,
+  } = useQuery({
+    queryKey: ["fuzzySearch", searchQuery],
+    queryFn: () => emailService.fuzzySearch(searchQuery),
+    enabled: isSearchMode && searchQuery.length > 0,
+  });
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query);
+    setIsSearchMode(true);
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setIsSearchMode(false);
+  };
+
+  const handleSearchEmailClick = (emailId: string) => {
+    handleClearSearch();
+    navigate(`/${selectedMailboxId}/${emailId}`);
+  };
 
   useEffect(() => {
     if (user) {
@@ -309,11 +340,36 @@ export default function InboxPage() {
             Email Client AI
           </span>
         </div>
+
+        {/* Search Bar */}
+        <div className="flex-1 max-w-md mx-4 hidden md:block">
+          <SearchBar
+            onSearch={handleSearch}
+            onClear={handleClearSearch}
+            isSearching={isSearching}
+            placeholder="Tìm kiếm email (hỗ trợ fuzzy)..."
+          />
+        </div>
+
         <KanbanToggle isKanban={false} onToggle={() => navigate("/kanban")} />
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-hidden relative">
+        {/* Search Results Overlay */}
+        {isSearchMode && (
+          <div className="absolute inset-0 z-20 bg-white dark:bg-gray-900">
+            <SearchResultsView
+              query={searchQuery}
+              results={searchResults?.emails || []}
+              isLoading={isSearching}
+              error={searchError ? "Không thể tìm kiếm. Vui lòng thử lại." : null}
+              onBack={handleClearSearch}
+              onEmailClick={handleSearchEmailClick}
+            />
+          </div>
+        )}
+
         {/* Desktop Layout - 3 columns */}
         <div className="hidden lg:flex h-full">
           {/* Column 1: Sidebar */}
