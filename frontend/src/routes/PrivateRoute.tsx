@@ -47,11 +47,15 @@ export const PrivateRoute = ({ children }: PrivateRouteProps) => {
             }
 
             try {
+                // Call refresh endpoint - backend will read refresh_token from cookie
                 const response = await authService.refreshToken({ refresh_token: "" });
                 if (!isMounted) return;
 
                 if (response.user) {
                     dispatch(setUser(response.user));
+                }
+                if (response.access_token) {
+                    setAccessToken(response.access_token);
                 }
             } catch {
                 if (!isMounted) return;

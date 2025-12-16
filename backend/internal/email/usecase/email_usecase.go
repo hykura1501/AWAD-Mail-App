@@ -12,6 +12,7 @@ import (
 	"ga03-backend/pkg/utils/crypto"
 	"mime/multipart"
 	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -137,10 +138,10 @@ func (u *emailUsecase) SummarizeEmail(ctx context.Context, emailID string) (stri
 	}
 
 	if err != nil || email == nil {
-		return "", fmt.Errorf("Email not found")
+		return "", fmt.Errorf("email not found")
 	}
 	if u.geminiService == nil {
-		return "", fmt.Errorf("Gemini service not configured")
+		return "", fmt.Errorf("gemini service not configured")
 	}
 	prompt := "Hãy tóm tắt nội dung email sau bằng tiếng Việt, chỉ nêu ý chính, không thêm nhận xét cá nhân: " + email.Body
 	return u.geminiService.SummarizeEmail(ctx, prompt)
@@ -556,7 +557,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decrypt password: %w", err)
 		}
-		
+
 		// For IMAP, we fetch INBOX and filter by local Kanban status
 		// Note: This is inefficient for large mailboxes as we fetch then filter.
 		// A better approach would be to store Kanban status in DB for IMAP users too.
@@ -621,7 +622,17 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 // FuzzySearch performs fuzzy search over emails
 // It searches subject, from, from_name fields with typo tolerance and partial matching
 // Results are ranked by relevance score (best matches first)
+// Optimized: Progressive fetching - fetch small batches and only fetch more if needed
 func (u *emailUsecase) FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error) {
+	// Validate and normalize query
+	query = strings.TrimSpace(query)
+	if len(query) == 0 {
+		return []*emaildomain.Email{}, 0, nil
+	}
+	if len(query) < 1 {
+		return []*emaildomain.Email{}, 0, fmt.Errorf("query too short")
+	}
+
 	user, err := u.userRepo.FindByID(userID)
 	if err != nil {
 		return nil, 0, err
@@ -630,74 +641,183 @@ func (u *emailUsecase) FuzzySearch(userID, query string, limit, offset int) ([]*
 		return nil, 0, fmt.Errorf("user not found")
 	}
 
-	var allEmails []*emaildomain.Email
+	// Build Gmail search query for pre-filtering (only for Gmail provider)
+	var gmailSearchQuery string
+	if user.Provider != "imap" {
+		gmailSearchQuery = fuzzy.BuildGmailSearchQuery(query)
+	}
 
-	// Fetch more emails for better search results (we'll filter and paginate later)
-	fetchLimit := 200
-
-	if user.Provider == "imap" {
-		decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to decrypt password: %w", err)
+	// Progressive fetching: start with small batch, fetch more if needed
+	// Initial batch size - small enough to be fast, large enough to find matches
+	initialBatchSize := 50
+	if limit > 0 {
+		// Fetch at least 2x the limit initially
+		initialBatchSize = limit * 2
+		if initialBatchSize < 30 {
+			initialBatchSize = 30
 		}
-		allEmails, _, err = u.imapProvider.GetEmails(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, "INBOX", fetchLimit, 0)
-		if err != nil {
-			return nil, 0, err
-		}
-	} else {
-		accessToken, refreshToken, err := u.getUserTokens(userID)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		if accessToken == "" {
-			// Fallback to local storage
-			allEmails, _, err = u.emailRepo.GetEmailsByMailbox("INBOX", fetchLimit, 0)
-			if err != nil {
-				return nil, 0, err
-			}
-		} else {
-			ctx := context.Background()
-			allEmails, _, err = u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", fetchLimit, 0, "", u.makeTokenUpdateCallback(userID))
-			if err != nil {
-				return nil, 0, err
-			}
+		if initialBatchSize > 100 {
+			initialBatchSize = 100 // Start with reasonable size
 		}
 	}
 
-	// Apply fuzzy matching and calculate relevance scores
+	// Additional batch size when we need more results
+	additionalBatchSize := 50
+	maxBatches := 10      // Safety limit to prevent infinite loops
+	maxTotalEmails := 500 // Maximum total emails to process
+
 	type scoredEmail struct {
 		email *emaildomain.Email
 		score float64
 	}
 
-	var matchedEmails []scoredEmail
-	for _, email := range allEmails {
-		if fuzzy.FuzzyMatchEmail(query, email.Subject, email.From, email.FromName, email.Preview) {
-			score := fuzzy.CalculateRelevanceScore(query, email.Subject, email.From, email.FromName)
-			matchedEmails = append(matchedEmails, scoredEmail{email: email, score: score})
-		}
+	matchedEmails := make([]scoredEmail, 0, limit*2)
+	currentOffset := 0
+	batchCount := 0
+	totalProcessed := 0
+
+	// Track if we should continue fetching
+	shouldContinue := true
+	targetHighQualityResults := limit
+	if targetHighQualityResults <= 0 {
+		targetHighQualityResults = 20 // Default target
 	}
 
-	// Sort by relevance score (highest first)
+	for shouldContinue && batchCount < maxBatches && totalProcessed < maxTotalEmails {
+		batchCount++
+		batchSize := initialBatchSize
+		if batchCount > 1 {
+			batchSize = additionalBatchSize
+		}
+
+		var batchEmails []*emaildomain.Email
+		var accessToken string
+
+		// Fetch batch of emails
+		if user.Provider == "imap" {
+			decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+			if err != nil {
+				return nil, 0, fmt.Errorf("failed to decrypt password: %w", err)
+			}
+			batchEmails, _, err = u.imapProvider.GetEmails(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, "INBOX", batchSize, currentOffset)
+			if err != nil {
+				return nil, 0, err
+			}
+		} else {
+			var refreshToken string
+			accessToken, refreshToken, err = u.getUserTokens(userID)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			if accessToken == "" {
+				// Fallback to local storage
+				batchEmails, _, err = u.emailRepo.GetEmailsByMailbox("INBOX", batchSize, currentOffset)
+				if err != nil {
+					return nil, 0, err
+				}
+			} else {
+				// Use Gmail search query for pre-filtering
+				ctx := context.Background()
+				batchEmails, _, err = u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", batchSize, currentOffset, gmailSearchQuery, u.makeTokenUpdateCallback(userID))
+				if err != nil {
+					return nil, 0, err
+				}
+			}
+		}
+
+		// If no more emails, stop fetching
+		if len(batchEmails) == 0 {
+			break
+		}
+
+		totalProcessed += len(batchEmails)
+
+		// Pre-filter with quick contains check (for local storage and IMAP)
+		var preFilteredEmails []*emaildomain.Email
+		if user.Provider == "imap" || (user.Provider != "imap" && accessToken == "") {
+			preFilteredEmails = make([]*emaildomain.Email, 0, len(batchEmails)/2)
+			for _, email := range batchEmails {
+				if fuzzy.QuickFilter(query, email.Subject, email.From, email.FromName) {
+					preFilteredEmails = append(preFilteredEmails, email)
+				}
+			}
+			batchEmails = preFilteredEmails
+		}
+
+		// Process batch: fuzzy match and score
+		for _, email := range batchEmails {
+			if fuzzy.FuzzyMatchEmail(query, email.Subject, email.From, email.FromName, email.Preview) {
+				score := fuzzy.CalculateRelevanceScore(query, email.Subject, email.From, email.FromName)
+
+				if score > 0 {
+					matchedEmails = append(matchedEmails, scoredEmail{
+						email: email,
+						score: score,
+					})
+				}
+			}
+		}
+
+		// Check if we have enough high-quality results
+		highQualityCount := 0
+		for _, m := range matchedEmails {
+			if m.score > 50 {
+				highQualityCount++
+			}
+		}
+
+		// Decision: continue fetching?
+		// 1. If we have enough high-quality results, we can stop
+		// 2. If we have enough total results (limit * 2), we can stop
+		// 3. If batch was smaller than requested, no more emails available
+		if highQualityCount >= targetHighQualityResults && limit > 0 {
+			shouldContinue = false
+		} else if len(matchedEmails) >= limit*2 && limit > 0 {
+			shouldContinue = false
+		} else if len(batchEmails) < batchSize {
+			// Last batch was smaller, no more emails
+			shouldContinue = false
+		}
+
+		// Update offset for next batch
+		currentOffset += len(batchEmails)
+	}
+
+	// Early return if no matches
+	if len(matchedEmails) == 0 {
+		return []*emaildomain.Email{}, 0, nil
+	}
+
+	// Sort by relevance score (highest first), then by date (newest first) for tie-breaking
 	sort.Slice(matchedEmails, func(i, j int) bool {
-		return matchedEmails[i].score > matchedEmails[j].score
+		if matchedEmails[i].score != matchedEmails[j].score {
+			return matchedEmails[i].score > matchedEmails[j].score
+		}
+		// If scores are equal, prefer newer emails
+		return matchedEmails[i].email.ReceivedAt.After(matchedEmails[j].email.ReceivedAt)
 	})
 
 	total := len(matchedEmails)
 
 	// Apply pagination
-	start := offset
-	if start > len(matchedEmails) {
-		start = len(matchedEmails)
+	if offset < 0 {
+		offset = 0
 	}
-	end := start + limit
-	if end > len(matchedEmails) {
-		end = len(matchedEmails)
+	if offset >= total {
+		return []*emaildomain.Email{}, total, nil
 	}
 
-	result := make([]*emaildomain.Email, 0, end-start)
-	for i := start; i < end; i++ {
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if limit <= 0 {
+		end = total // Return all if limit is 0 or negative
+	}
+
+	result := make([]*emaildomain.Email, 0, end-offset)
+	for i := offset; i < end; i++ {
 		result = append(result, matchedEmails[i].email)
 	}
 

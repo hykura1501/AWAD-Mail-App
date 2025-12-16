@@ -134,6 +134,8 @@ func (s *Service) GetMailboxes(ctx context.Context, accessToken, refreshToken st
 }
 
 // GetEmails retrieves emails from a specific mailbox/label
+// Uses Gmail API pagination with pageToken for efficient pagination
+// MaxResults can be up to 500 per request according to Gmail API docs
 func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken string, labelID string, limit, offset int, queryStr string, onTokenRefresh TokenUpdateFunc) ([]*emaildomain.Email, int, error) {
 	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
 	if err != nil {
@@ -142,9 +144,7 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 
 	user := "me"
 
-	// Build query
-	query := srv.Users.Messages.List(user)
-
+	// Build query string
 	q := ""
 	if labelID != "" && labelID != "ALL" {
 		q += "label:" + labelID + " "
@@ -153,58 +153,127 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 		q += queryStr
 	}
 
-	if q != "" {
-		query = query.Q(q)
-	}
-
-	// Handle offset by advancing page token
+	// Gmail API pagination: use pageToken instead of offset
+	// We need to advance through pages to reach the desired offset
 	pageToken := ""
+	currentOffset := 0
+
+	// Optimize offset handling: use MaxResults=500 (Gmail API max) to skip faster
 	if offset > 0 {
+		maxResultsPerPage := int64(500) // Gmail API maximum
 		skipped := 0
+
 		for skipped < offset {
-			toSkip := offset - skipped
-			if toSkip > 500 {
-				toSkip = 500
+			remaining := offset - skipped
+			toFetch := int64(remaining)
+			if toFetch > maxResultsPerPage {
+				toFetch = maxResultsPerPage
 			}
 
-			// Just fetch IDs to skip
-			resp, err := srv.Users.Messages.List(user).Q(q).MaxResults(int64(toSkip)).PageToken(pageToken).Do()
+			// Fetch only message IDs (lightweight) to advance pageToken
+			listQuery := srv.Users.Messages.List(user)
+			if q != "" {
+				listQuery = listQuery.Q(q)
+			}
+			listQuery = listQuery.MaxResults(toFetch)
+			if pageToken != "" {
+				listQuery = listQuery.PageToken(pageToken)
+			}
+
+			resp, err := listQuery.Do()
 			if err != nil {
 				return nil, 0, fmt.Errorf("unable to skip messages: %v", err)
 			}
 
+			// Update skipped count
 			skipped += len(resp.Messages)
 			pageToken = resp.NextPageToken
-			if pageToken == "" {
+
+			// If no more pages or we've skipped enough, stop
+			if pageToken == "" || skipped >= offset {
 				break
 			}
 		}
+
+		// If we skipped exactly the offset, we're ready
+		// If we skipped more, we need to adjust (but Gmail API doesn't support going back)
+		// So we just continue from current pageToken
+		currentOffset = skipped
 	}
 
-	query = query.MaxResults(int64(limit))
+	// Now fetch the actual messages we need
+	// Set limit (Gmail API max is 500)
+	requestLimit := int64(limit)
+	if requestLimit <= 0 {
+		requestLimit = 20 // Default
+	}
+	if requestLimit > 500 {
+		requestLimit = 500 // Gmail API maximum
+	}
+
+	listQuery := srv.Users.Messages.List(user)
+	if q != "" {
+		listQuery = listQuery.Q(q)
+	}
+	listQuery = listQuery.MaxResults(requestLimit)
 	if pageToken != "" {
-		query = query.PageToken(pageToken)
+		listQuery = listQuery.PageToken(pageToken)
 	}
 
-	messagesResp, err := query.Do()
+	messagesResp, err := listQuery.Do()
 	if err != nil {
 		return nil, 0, fmt.Errorf("unable to retrieve messages: %v", err)
 	}
 
-	emails := make([]*emaildomain.Email, 0)
+	// If we had an offset and skipped some messages, we might need to adjust
+	// But since Gmail API uses pageToken, we can't go back, so we just return what we got
+	emails := make([]*emaildomain.Email, 0, len(messagesResp.Messages))
 
 	// Get full message details for each message
-	for _, msg := range messagesResp.Messages {
-		fullMsg, err := srv.Users.Messages.Get(user, msg.Id).Format("full").Do()
-		if err != nil {
-			continue // Skip messages we can't fetch
-		}
-
-		email := convertGmailMessageToEmail(fullMsg)
-		emails = append(emails, email)
+	// Use goroutines for parallel fetching to improve performance
+	type emailResult struct {
+		email *emaildomain.Email
+		err   error
 	}
 
-	return emails, int(messagesResp.ResultSizeEstimate), nil
+	emailChan := make(chan emailResult, len(messagesResp.Messages))
+
+	// Fetch emails in parallel (with reasonable concurrency limit)
+	semaphore := make(chan struct{}, 10) // Max 10 concurrent requests
+
+	for _, msg := range messagesResp.Messages {
+		go func(msgID string) {
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			fullMsg, err := srv.Users.Messages.Get(user, msgID).Format("full").Do()
+			if err != nil {
+				emailChan <- emailResult{nil, err}
+				return
+			}
+
+			email := convertGmailMessageToEmail(fullMsg)
+			emailChan <- emailResult{email, nil}
+		}(msg.Id)
+	}
+
+	// Collect results
+	for i := 0; i < len(messagesResp.Messages); i++ {
+		result := <-emailChan
+		if result.err == nil && result.email != nil {
+			emails = append(emails, result.email)
+		}
+		// Skip emails we can't fetch (already logged in Get)
+	}
+
+	// Return total estimate from Gmail API
+	totalEstimate := int(messagesResp.ResultSizeEstimate)
+	if totalEstimate == 0 && len(emails) > 0 {
+		// If estimate is 0 but we have emails, use a reasonable estimate
+		totalEstimate = len(emails) + currentOffset
+	}
+
+	return emails, totalEstimate, nil
 }
 
 // GetAttachment retrieves an attachment from a message

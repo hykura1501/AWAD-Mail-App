@@ -118,7 +118,7 @@ export const emailService = {
 
   fuzzySearch: async (
     query: string,
-    limit = 50,
+    limit = 10,
     offset = 0
   ): Promise<EmailsResponse> => {
     const response = await apiClient.get<EmailsResponse>("/emails/search", {

@@ -5,6 +5,83 @@ import (
 	"unicode"
 )
 
+// BuildGmailSearchQuery builds a Gmail search query from user query for pre-filtering
+// This helps reduce the number of emails that need fuzzy matching
+// Gmail search syntax: https://support.google.com/mail/answer/7190
+func BuildGmailSearchQuery(userQuery string) string {
+	userQuery = strings.TrimSpace(userQuery)
+	if len(userQuery) == 0 {
+		return ""
+	}
+
+	// Split query into words
+	words := strings.Fields(userQuery)
+	if len(words) == 0 {
+		return ""
+	}
+
+	// Build Gmail search query
+	// Format: (subject:"word1" OR subject:"word2" OR from:"word1" OR from:"word2")
+	// This will pre-filter emails that contain any of the words in subject or from
+
+	var parts []string
+
+	// For single word, search in subject and from
+	if len(words) == 1 {
+		word := words[0]
+		// Escape quotes in word
+		word = strings.ReplaceAll(word, `"`, `\"`)
+		parts = append(parts, `subject:"`+word+`"`)
+		parts = append(parts, `from:"`+word+`"`)
+	} else {
+		// For multiple words, search for any word in subject or from
+		// This is more lenient - we'll do exact matching in fuzzy later
+		for _, word := range words {
+			if len(word) >= 2 { // Skip very short words
+				word = strings.ReplaceAll(word, `"`, `\"`)
+				parts = append(parts, `subject:"`+word+`"`)
+				parts = append(parts, `from:"`+word+`"`)
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	// Combine with OR - Gmail will return emails matching any of these
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+// QuickFilter performs a simple contains check for pre-filtering
+// Returns true if email might match (for further fuzzy matching)
+// This is much faster than fuzzy matching and helps reduce the dataset
+func QuickFilter(query, subject, from, fromName string) bool {
+	query = normalizeString(query)
+	if len(query) == 0 {
+		return false
+	}
+
+	subjectNorm := normalizeString(subject)
+	fromNorm := normalizeString(from)
+	fromNameNorm := normalizeString(fromName)
+
+	// Check if any word in query appears in subject, from, or fromName
+	queryWords := strings.Fields(query)
+	for _, word := range queryWords {
+		if len(word) < 2 {
+			continue
+		}
+		if strings.Contains(subjectNorm, word) ||
+			strings.Contains(fromNorm, word) ||
+			strings.Contains(fromNameNorm, word) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // LevenshteinDistance calculates the edit distance between two strings
 // This measures how many single-character edits (insertions, deletions, or substitutions)
 // are required to change one string into another
@@ -49,8 +126,8 @@ func LevenshteinDistance(s1, s2 string) int {
 				cost = 1
 			}
 			d[i][j] = min3(
-				d[i-1][j]+1,   // deletion
-				d[i][j-1]+1,   // insertion
+				d[i-1][j]+1,      // deletion
+				d[i][j-1]+1,      // insertion
 				d[i-1][j-1]+cost, // substitution
 			)
 		}
@@ -65,28 +142,64 @@ func FuzzyMatch(query, text string, threshold int) bool {
 	query = normalizeString(query)
 	text = normalizeString(text)
 
-	// If query is contained in text, it's a match
+	// Empty query matches nothing
+	if len(query) == 0 {
+		return false
+	}
+
+	// If query is contained in text, it's a match (exact substring)
 	if strings.Contains(text, query) {
 		return true
 	}
 
-	// Check if any word in text fuzzy-matches the query
+	// For multi-word queries, check if all words match
+	queryWords := strings.Fields(query)
+	if len(queryWords) > 1 {
+		// All words must match somewhere in the text
+		for _, qWord := range queryWords {
+			if len(qWord) < 2 {
+				continue // Skip very short words
+			}
+			wordMatched := false
+			textWords := strings.Fields(text)
+			for _, tWord := range textWords {
+				if strings.Contains(tWord, qWord) || LevenshteinDistance(qWord, tWord) <= threshold {
+					wordMatched = true
+					break
+				}
+			}
+			if !wordMatched {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Single word query: check if any word in text fuzzy-matches
 	words := strings.Fields(text)
 	for _, word := range words {
-		if LevenshteinDistance(query, word) <= threshold {
+		// Exact prefix match (high priority)
+		if strings.HasPrefix(word, query) {
 			return true
 		}
-		// Check if word starts with query (partial match)
-		if strings.HasPrefix(word, query) {
+		// Fuzzy match within threshold
+		if len(word) > 0 && LevenshteinDistance(query, word) <= threshold {
+			return true
+		}
+		// Check if query is substring of word (for partial matches)
+		if len(query) >= 3 && strings.Contains(word, query) {
 			return true
 		}
 	}
 
-	// Check overall distance for short texts
-	if len(text) < 50 {
+	// For short texts, check overall distance
+	if len(text) < 100 {
 		distance := LevenshteinDistance(query, text)
-		// Allow more tolerance for longer queries
-		maxDistance := threshold + len(query)/5
+		// More tolerance for longer queries
+		maxDistance := threshold
+		if len(query) >= 5 {
+			maxDistance = threshold + 1
+		}
 		if distance <= maxDistance {
 			return true
 		}
@@ -97,66 +210,128 @@ func FuzzyMatch(query, text string, threshold int) bool {
 
 // CalculateRelevanceScore scores how relevant an email is to a query
 // Higher score = more relevant
-// Searches subject, from, from_name fields
+// Searches subject, from, from_name fields with improved scoring
 func CalculateRelevanceScore(query, subject, from, fromName string) float64 {
 	query = normalizeString(query)
+	if len(query) == 0 {
+		return 0.0
+	}
+
 	score := 0.0
+	queryWords := strings.Fields(query)
 
-	// Exact match in subject (highest weight)
+	// Subject scoring (highest priority)
 	subjectNorm := normalizeString(subject)
-	if strings.Contains(subjectNorm, query) {
-		score += 100.0
-		// Bonus for exact word match
-		if containsWord(subjectNorm, query) {
-			score += 50.0
+	if len(queryWords) == 1 {
+		// Single word query
+		if strings.Contains(subjectNorm, query) {
+			score += 100.0
+			if containsWord(subjectNorm, query) {
+				score += 50.0 // Exact word match bonus
+			}
+			// Position bonus: matches at start get higher score
+			if strings.HasPrefix(subjectNorm, query) {
+				score += 30.0
+			}
+		} else {
+			// Fuzzy match in subject
+			subjectWords := strings.Fields(subjectNorm)
+			bestMatch := 999
+			for _, word := range subjectWords {
+				if strings.HasPrefix(word, query) {
+					score += 40.0
+					break
+				}
+				dist := LevenshteinDistance(query, word)
+				if dist <= 2 && dist < bestMatch {
+					bestMatch = dist
+					score += 50.0 - float64(dist)*15
+				}
+			}
 		}
 	} else {
-		// Fuzzy match in subject
+		// Multi-word query: check how many words match
+		matchedWords := 0
 		subjectWords := strings.Fields(subjectNorm)
-		for _, word := range subjectWords {
-			dist := LevenshteinDistance(query, word)
-			if dist <= 2 {
-				score += 50.0 - float64(dist)*15
+		for _, qWord := range queryWords {
+			if len(qWord) < 2 {
+				continue
 			}
-			if strings.HasPrefix(word, query) {
-				score += 40.0
+			for _, sWord := range subjectWords {
+				if strings.Contains(sWord, qWord) || LevenshteinDistance(qWord, sWord) <= 2 {
+					matchedWords++
+					break
+				}
+			}
+		}
+		if matchedWords > 0 {
+			matchRatio := float64(matchedWords) / float64(len(queryWords))
+			score += 100.0 * matchRatio
+			if matchedWords == len(queryWords) {
+				score += 50.0 // All words matched bonus
 			}
 		}
 	}
 
-	// Exact match in sender name
+	// Sender name scoring
 	fromNameNorm := normalizeString(fromName)
-	if strings.Contains(fromNameNorm, query) {
-		score += 80.0
-		if containsWord(fromNameNorm, query) {
-			score += 30.0
+	if len(queryWords) == 1 {
+		if strings.Contains(fromNameNorm, query) {
+			score += 80.0
+			if containsWord(fromNameNorm, query) {
+				score += 30.0
+			}
+			if strings.HasPrefix(fromNameNorm, query) {
+				score += 20.0
+			}
+		} else {
+			nameWords := strings.Fields(fromNameNorm)
+			for _, word := range nameWords {
+				if strings.HasPrefix(word, query) {
+					score += 35.0
+					break
+				}
+				dist := LevenshteinDistance(query, word)
+				if dist <= 2 {
+					score += 40.0 - float64(dist)*12
+					break
+				}
+			}
 		}
 	} else {
-		// Fuzzy match in sender name
+		// Multi-word: check name
+		matchedWords := 0
 		nameWords := strings.Fields(fromNameNorm)
-		for _, word := range nameWords {
-			dist := LevenshteinDistance(query, word)
-			if dist <= 2 {
-				score += 40.0 - float64(dist)*12
+		for _, qWord := range queryWords {
+			if len(qWord) < 2 {
+				continue
 			}
-			if strings.HasPrefix(word, query) {
-				score += 35.0
+			for _, nWord := range nameWords {
+				if strings.Contains(nWord, qWord) || LevenshteinDistance(qWord, nWord) <= 2 {
+					matchedWords++
+					break
+				}
 			}
+		}
+		if matchedWords > 0 {
+			matchRatio := float64(matchedWords) / float64(len(queryWords))
+			score += 80.0 * matchRatio
 		}
 	}
 
-	// Match in email address
+	// Email address scoring (lower priority)
 	fromNorm := normalizeString(from)
 	if strings.Contains(fromNorm, query) {
 		score += 60.0
-	} else {
 		// Check email local part
-		localPart := fromNorm
 		if idx := strings.Index(fromNorm, "@"); idx > 0 {
-			localPart = fromNorm[:idx]
-		}
-		if strings.HasPrefix(localPart, query) {
-			score += 30.0
+			localPart := fromNorm[:idx]
+			if strings.Contains(localPart, query) {
+				score += 20.0
+				if strings.HasPrefix(localPart, query) {
+					score += 10.0
+				}
+			}
 		}
 	}
 
@@ -164,37 +339,62 @@ func CalculateRelevanceScore(query, subject, from, fromName string) float64 {
 }
 
 // FuzzyMatchEmail checks if an email matches the query
+// Returns true if query matches any of: subject, from, fromName, or body
 func FuzzyMatchEmail(query, subject, from, fromName, body string) bool {
-	// Typo tolerance threshold based on query length
+	query = normalizeString(query)
+
+	// Empty or very short queries don't match
+	if len(query) == 0 || len(strings.TrimSpace(query)) == 0 {
+		return false
+	}
+
+	// Calculate dynamic threshold based on query length
 	threshold := 2
-	if len(query) <= 3 {
+	queryLen := len(strings.TrimSpace(query))
+	if queryLen <= 2 {
+		threshold = 0 // Very short queries need exact match
+	} else if queryLen <= 3 {
 		threshold = 1
-	} else if len(query) >= 8 {
+	} else if queryLen >= 8 {
 		threshold = 3
 	}
 
-	// Check subject
-	if FuzzyMatch(query, subject, threshold) {
+	// Check subject (highest priority)
+	if len(subject) > 0 && FuzzyMatch(query, subject, threshold) {
 		return true
 	}
 
 	// Check sender name
-	if FuzzyMatch(query, fromName, threshold) {
+	if len(fromName) > 0 && FuzzyMatch(query, fromName, threshold) {
 		return true
 	}
 
-	// Check sender email
-	if FuzzyMatch(query, from, threshold) {
-		return true
+	// Check sender email (check local part more carefully)
+	if len(from) > 0 {
+		if FuzzyMatch(query, from, threshold) {
+			return true
+		}
+		// Also check local part separately
+		if idx := strings.Index(from, "@"); idx > 0 {
+			localPart := from[:idx]
+			if FuzzyMatch(query, localPart, threshold) {
+				return true
+			}
+		}
 	}
 
-	// Optionally check body (first 500 chars for performance)
+	// Check body (first 1000 chars for better coverage, but lower priority)
 	if len(body) > 0 {
 		bodySnippet := body
-		if len(bodySnippet) > 500 {
-			bodySnippet = bodySnippet[:500]
+		if len(bodySnippet) > 1000 {
+			bodySnippet = bodySnippet[:1000]
 		}
-		if FuzzyMatch(query, bodySnippet, threshold) {
+		// Use slightly higher threshold for body search
+		bodyThreshold := threshold + 1
+		if bodyThreshold > 3 {
+			bodyThreshold = 3
+		}
+		if FuzzyMatch(query, bodySnippet, bodyThreshold) {
 			return true
 		}
 	}
@@ -217,8 +417,9 @@ func min3(a, b, c int) int {
 	return c
 }
 
-// normalizeString converts to lowercase and handles unicode
+// normalizeString converts to lowercase, trims whitespace, and handles unicode
 func normalizeString(s string) string {
+	s = strings.TrimSpace(s)
 	s = strings.ToLower(s)
 	// Remove extra whitespace
 	s = strings.Join(strings.Fields(s), " ")

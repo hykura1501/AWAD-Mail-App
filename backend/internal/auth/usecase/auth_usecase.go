@@ -317,7 +317,46 @@ func (u *authUsecase) RefreshToken(refreshToken string) (*authdto.TokenResponse,
 		return nil, errors.New("user not found")
 	}
 
-	return u.generateTokens(user)
+	// Generate new access token only (don't rotate refresh token unless needed)
+	// This prevents issues with concurrent refresh requests
+	accessToken, err := u.generateAccessToken(user)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if refresh token is close to expiry (within 24 hours)
+	// If so, rotate it to extend session
+	shouldRotateRefreshToken := storedToken.ExpiresAt.Sub(time.Now()) < 24*time.Hour
+	
+	if shouldRotateRefreshToken {
+		// Generate new refresh token and replace old one
+		newRefreshToken, err := u.generateRefreshToken(user)
+		if err != nil {
+			return nil, err
+		}
+
+		refreshTokenEntity := &authdomain.RefreshToken{
+			Token:     newRefreshToken,
+			UserID:    user.ID,
+			ExpiresAt: time.Now().Add(u.config.JWTRefreshExpiry),
+		}
+		if err := u.userRepo.ReplaceRefreshToken(refreshTokenEntity); err != nil {
+			return nil, err
+		}
+
+		return &authdto.TokenResponse{
+			AccessToken:  accessToken,
+			RefreshToken: newRefreshToken,
+			User:         user,
+		}, nil
+	}
+
+	// Keep existing refresh token
+	return &authdto.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken, // Return same refresh token
+		User:         user,
+	}, nil
 }
 
 func (u *authUsecase) Logout(refreshToken string) error {

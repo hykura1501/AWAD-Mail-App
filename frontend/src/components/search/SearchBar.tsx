@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -8,6 +8,8 @@ interface SearchBarProps {
   isSearching?: boolean;
   placeholder?: string;
   className?: string;
+  value?: string; // Controlled value - if provided, displays this value
+  onChange?: (value: string) => void; // Optional onChange callback for controlled mode
 }
 
 export default function SearchBar({
@@ -16,8 +18,20 @@ export default function SearchBar({
   isSearching = false,
   placeholder = "Tìm kiếm email...",
   className,
+  value: controlledValue,
+  onChange,
 }: SearchBarProps) {
-  const [query, setQuery] = useState("");
+  const [internalQuery, setInternalQuery] = useState(controlledValue || "");
+
+  // Sync internal state when controlled value changes from outside (not from user input)
+  useEffect(() => {
+    if (controlledValue !== undefined) {
+      setInternalQuery(controlledValue);
+    }
+  }, [controlledValue]);
+
+  // Use controlled value if provided, otherwise use internal state
+  const query = controlledValue !== undefined ? controlledValue : internalQuery;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,8 +40,17 @@ export default function SearchBar({
     }
   };
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    setInternalQuery(newValue);
+    // If onChange callback provided, notify parent (for controlled mode)
+    if (onChange) {
+      onChange(newValue);
+    }
+  };
+
   const handleClear = () => {
-    setQuery("");
+    setInternalQuery("");
     onClear();
   };
 
@@ -50,7 +73,7 @@ export default function SearchBar({
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={isSearching}

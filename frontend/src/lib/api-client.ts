@@ -33,13 +33,23 @@ apiClient.interceptors.request.use(
 );
 
 // Function to refresh token
+// Uses cookie-based refresh token (withCredentials: true)
 const refreshAccessToken = async (): Promise<string> => {
     try {
+        // Backend reads refresh_token from cookie automatically
         const response = await axios.post<{ access_token: string }>(
             `${API_BASE_URL}/auth/refresh`,
             {},
-            { withCredentials: true }
+            { 
+                withCredentials: true,
+                // Don't retry refresh endpoint itself
+                validateStatus: (status) => status < 500
+            }
         );
+
+        if (response.status !== 200 || !response.data.access_token) {
+            throw new Error("Failed to refresh token");
+        }
 
         const newAccessToken = response.data.access_token;
         setAccessToken(newAccessToken);
@@ -65,7 +75,7 @@ apiClient.interceptors.response.use(
             originalRequest.url?.includes("/auth/logout") ||
             originalRequest.url?.includes("/auth/google");
 
-        // CASE 1: Handle refresh-token logic
+        // CASE 1: Handle refresh-token logic for 401 errors
         if (
             error.response?.status === 401 &&
             !originalRequest._retry &&
@@ -73,31 +83,41 @@ apiClient.interceptors.response.use(
         ) {
             originalRequest._retry = true;
 
+            // Use existing refresh promise if one is in progress (prevents multiple concurrent refreshes)
             if (!refreshPromise) {
                 refreshPromise = refreshAccessToken();
             }
 
             try {
                 const newAccessToken = await refreshPromise;
+                // Clear promise after successful refresh
                 refreshPromise = null;
 
+                // Retry original request with new token
                 if (originalRequest.headers) {
                     originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
                 }
 
                 return apiClient(originalRequest);
             } catch (refreshError) {
+                // Clear promise on error
                 refreshPromise = null;
                 setAccessToken(null);
-                window.location.href = "/login";
+                
+                // Only redirect if it's not already a refresh request
+                if (!originalRequest.url?.includes("/auth/refresh")) {
+                    window.location.href = "/login";
+                }
                 return Promise.reject(refreshError);
             }
         }
 
-        // CASE 2: ANY OTHER 401 → logout + redirect
-        if (error.response?.status === 401 && !isAuthEndpoint) {
+        // CASE 2: If refresh failed or token is invalid, redirect to login
+        if (error.response?.status === 401 && !isAuthEndpoint && originalRequest._retry) {
             setAccessToken(null);
-            window.location.href = "/login";
+            if (!originalRequest.url?.includes("/auth/refresh")) {
+                window.location.href = "/login";
+            }
         }
 
         return Promise.reject(error);

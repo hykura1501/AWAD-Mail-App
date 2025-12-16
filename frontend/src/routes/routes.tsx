@@ -7,6 +7,7 @@ import KanbanPage from "@/pages/KanbanPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
 import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
 import TermsOfServicePage from "@/pages/TermsOfServicePage";
+import SearchPage from "@/pages/SearchPage";
 
 export const router = createBrowserRouter([
   {
@@ -38,6 +39,14 @@ export const router = createBrowserRouter([
     element: (
       <PrivateRoute>
         <InboxPage />
+      </PrivateRoute>
+    ),
+  },
+  {
+    path: "/search",
+    element: (
+      <PrivateRoute>
+        <SearchPage />
       </PrivateRoute>
     ),
   },

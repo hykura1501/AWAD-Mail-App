@@ -124,7 +124,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	refreshToken, err := c.Cookie("refresh_token")
 	if err != nil || refreshToken == "" {
 		var req authdto.RefreshTokenRequest
-		if err := c.ShouldBindJSON(&req); err == nil {
+		if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
 			refreshToken = req.RefreshToken
 		}
 	}
@@ -140,8 +140,15 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	c.SetSameSite(http.SameSiteNoneMode)
-	c.SetCookie("refresh_token", result.RefreshToken, 7*24*3600, "/", "", true, true)
+	// Only update cookie if refresh token was rotated (different from input)
+	// This prevents unnecessary cookie updates and race conditions
+	newRefreshToken := result.RefreshToken
+	if newRefreshToken != "" && newRefreshToken != refreshToken {
+		c.SetSameSite(http.SameSiteNoneMode)
+		c.SetCookie("refresh_token", newRefreshToken, 7*24*3600, "/", "", true, true)
+	}
+
+	// Don't send refresh token in response body for security
 	result.RefreshToken = ""
 
 	c.JSON(http.StatusOK, result)

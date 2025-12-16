@@ -49,24 +49,6 @@ export default function SearchResultsView({
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        >
-          <ArrowLeft className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Kết quả tìm kiếm
-          </h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            "{query}" - {results.length} kết quả
-          </p>
-        </div>
-      </div>
-
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {/* Loading State */}
