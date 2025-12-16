@@ -8,49 +8,23 @@ import (
 // BuildGmailSearchQuery builds a Gmail search query from user query for pre-filtering
 // This helps reduce the number of emails that need fuzzy matching
 // Gmail search syntax: https://support.google.com/mail/answer/7190
+// IMPORTANT: Gmail search doesn't automatically remove accents, so for Vietnamese text,
+// we return empty string to skip Gmail pre-filtering and fetch all emails for fuzzy matching
+// This ensures we don't miss matches like "canh" -> "cảnh báo"
 func BuildGmailSearchQuery(userQuery string) string {
 	userQuery = strings.TrimSpace(userQuery)
 	if len(userQuery) == 0 {
 		return ""
 	}
 
-	// Split query into words
-	words := strings.Fields(userQuery)
-	if len(words) == 0 {
-		return ""
-	}
+	// Check if query might contain Vietnamese characters or needs accent-insensitive matching
+	// Gmail search is accent-sensitive, so for better results with Vietnamese text,
+	// we skip Gmail pre-filtering and rely on fuzzy matching instead
+	// This is more inclusive and ensures we don't miss matches
 
-	// Build Gmail search query
-	// Format: (subject:"word1" OR subject:"word2" OR from:"word1" OR from:"word2")
-	// This will pre-filter emails that contain any of the words in subject or from
-
-	var parts []string
-
-	// For single word, search in subject and from
-	if len(words) == 1 {
-		word := words[0]
-		// Escape quotes in word
-		word = strings.ReplaceAll(word, `"`, `\"`)
-		parts = append(parts, `subject:"`+word+`"`)
-		parts = append(parts, `from:"`+word+`"`)
-	} else {
-		// For multiple words, search for any word in subject or from
-		// This is more lenient - we'll do exact matching in fuzzy later
-		for _, word := range words {
-			if len(word) >= 2 { // Skip very short words
-				word = strings.ReplaceAll(word, `"`, `\"`)
-				parts = append(parts, `subject:"`+word+`"`)
-				parts = append(parts, `from:"`+word+`"`)
-			}
-		}
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	// Combine with OR - Gmail will return emails matching any of these
-	return "(" + strings.Join(parts, " OR ") + ")"
+	// For now, we'll skip Gmail search query for all queries to ensure accent-insensitive matching
+	// The performance impact is acceptable since we do progressive fetching and early termination
+	return ""
 }
 
 // QuickFilter performs a simple contains check for pre-filtering
@@ -417,10 +391,13 @@ func min3(a, b, c int) int {
 	return c
 }
 
-// normalizeString converts to lowercase, trims whitespace, and handles unicode
+// normalizeString converts to lowercase, trims whitespace, removes accents, and handles unicode
+// This allows matching "canh" with "cảnh báo" by removing Vietnamese accents
 func normalizeString(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ToLower(s)
+	// Remove accents for better matching (e.g., "cảnh" -> "canh")
+	s = removeAccents(s)
 	// Remove extra whitespace
 	s = strings.Join(strings.Fields(s), " ")
 	return s
