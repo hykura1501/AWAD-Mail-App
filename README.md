@@ -1,9 +1,9 @@
-# React Authentication + Email Dashboard
+# React Authentication + Email Dashboard G06 Week03
 
 **Public URLs:**
-- **Frontend (Vercel):** https://g05-week02.vercel.app/
-- **Backend (Render):** https://g05-week02.onrender.com/
-- **Monorepo:** https://github.com/mandeotv1234/G05_Week02
+- **Frontend (Vercel):** https://inbox-flow-eta.vercel.app/
+- **Backend (Render):** https://awad-mail-app.onrender.com
+- **Monorepo:** https://github.com/PhanPhuc269/AWAD-Mail-App
 
 ---
 
@@ -389,6 +389,26 @@ The project has been updated to satisfy this week's assignment requirements. Key
 
 Note: IMAP and provider-backed kanban state (for Gmail/IMAP) currently uses in-memory maps for this assignment. For production, persist snooze/kanban state so it survives server restarts.
 
+<!-- Additional implemented features for this week (F1 — F3) -->
+## Additional features implemented this week (F1 — F3)
+
+- F1 — Fuzzy Search Engine (Backend):
+  - Implemented a server-side fuzzy search that handles typos, diacritics, and partial matches across email subject and sender fields.
+  - Results are scored and ranked by relevance and recency so non-exact matches return sensible top results.
+  - Developer/demo queries are available in the project notes to illustrate typical non-exact matches.
+
+- F2 — Fuzzy Search UI (Frontend):
+  - Added an integrated search bar that calls the backend fuzzy search and displays results as compact cards.
+  - Each result card shows sender, subject, a snippet, and a "View/Open" action that opens the email detail view.
+  - Loading, empty, and error states are handled gracefully; users can easily navigate back to the Kanban/Inbox views.
+
+- F3 — Filtering & Sorting (Kanban):
+  - Exposed at least two sort options (e.g., "newest" / "oldest") and the `unreadOnly` and `withAttachments` filters in the Kanban UI.
+  - Sorting and filtering apply in real time to the Kanban columns without a full page reload.
+  - Toggle behavior and combinations are implemented and tested to behave as expected.
+
+These items were added in addition to the previously listed weekly requirements; no existing documentation content was removed.
+
 ---
 
 ## Grading Rubric (Scoring Criteria)
@@ -429,4 +449,3 @@ This project is created for educational purposes.
 ## Author
 
 Created as part of the AWDA GA03 assignment.
-
