@@ -26,7 +26,9 @@ export type KanbanColumn = {
 export type KanbanBoardProps = {
   columns: KanbanColumn[];
   onEmailDrop: (emailId: string, targetColumnId: string) => void;
-  renderCardActions?: (email: Email) => React.ReactNode;
+  // Allow renderCardActions to optionally receive the columnId so callers can
+  // decide to show 'Snooze' vs 'Unsnooze' based on the column the email is in.
+  renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
   onPageChange?: (colId: string, dir: 1 | -1) => void;
   onEmailClick?: (emailId: string) => void;
   emailSummaries?: Record<string, { summary: string; loading: boolean }>;
@@ -54,14 +56,16 @@ function DraggableEmailCard({
   onClick,
   summary,
   summaryLoading,
-  onRequestSummary
-}: { 
+  onRequestSummary,
+  columnId
+}: {
   email: Email; 
-  renderCardActions?: (email: Email) => React.ReactNode;
+  renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
   onClick?: (emailId: string) => void;
   summary?: string;
   summaryLoading?: boolean;
   onRequestSummary?: (emailId: string) => void;
+  columnId?: string;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: email.id,
@@ -136,7 +140,7 @@ function DraggableEmailCard({
         
         {/* Other Action Buttons (Snooze/Unsnooze) */}
         <div className="flex gap-2">
-          {renderCardActions?.(email)}
+          {renderCardActions?.(email, columnId)}
         </div>
       </div>
     </div>
@@ -310,6 +314,7 @@ export default function KanbanBoard({
                 summary={emailSummaries[email.id]?.summary}
                 summaryLoading={emailSummaries[email.id]?.loading}
                 onRequestSummary={onRequestSummary}
+                columnId={col.id}
               />
             ))}
           </DroppableColumn>

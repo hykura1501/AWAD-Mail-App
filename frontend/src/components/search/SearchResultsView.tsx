@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, AlertCircle, Inbox, Paperclip } from "lucide-react";
+import { Loader2, AlertCircle, Inbox, Paperclip } from "lucide-react";
 import type { Email } from "@/types/email";
 
 interface SearchResultsViewProps {
@@ -11,7 +11,6 @@ interface SearchResultsViewProps {
 }
 
 export default function SearchResultsView({
-  query,
   results,
   isLoading,
   error,
