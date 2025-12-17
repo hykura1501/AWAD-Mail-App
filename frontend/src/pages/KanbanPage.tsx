@@ -104,15 +104,7 @@ export default function KanbanPage() {
     enabled: !!detailEmailId,
   });
 
-  // Snooze mutation
-  const snoozeEmailMutation = useMutation({
-    mutationFn: async (emailId: string) => {
-      await emailService.moveEmailToMailbox(emailId, "snoozed");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["emails"] });
-    },
-  });
+
 
   // Wake up mutation
   const wakeUpEmailMutation = useMutation({
@@ -185,7 +177,6 @@ export default function KanbanPage() {
   // Query từng cột
   const {
     data: inboxData,
-    refetch: refetchInbox,
     isLoading: isLoadingInbox,
   } = useQuery({
     queryKey: ["emails", "kanban", "inbox", kanbanOffsets.inbox],
@@ -194,7 +185,6 @@ export default function KanbanPage() {
   });
   const {
     data: todoData,
-    refetch: refetchTodo,
     isLoading: isLoadingTodo,
   } = useQuery({
     queryKey: ["emails", "kanban", "todo", kanbanOffsets.todo],
@@ -203,7 +193,6 @@ export default function KanbanPage() {
   });
   const {
     data: doneData,
-    refetch: refetchDone,
     isLoading: isLoadingDone,
   } = useQuery({
     queryKey: ["emails", "kanban", "done", kanbanOffsets.done],
@@ -212,7 +201,6 @@ export default function KanbanPage() {
   });
   const {
     data: snoozedData,
-    refetch: refetchSnoozed,
     isLoading: isLoadingSnoozed,
   } = useQuery({
     queryKey: ["emails", "kanban", "snoozed", kanbanOffsets.snoozed],
@@ -326,11 +314,6 @@ export default function KanbanPage() {
     });
     // Call API ngầm
     moveEmailMutation.mutate({ emailId, mailboxId: targetColumnId });
-    // Refetch lại dữ liệu cột đích và cột nguồn
-    if (targetColumnId === "inbox") refetchInbox();
-    if (targetColumnId === "todo") refetchTodo();
-    if (targetColumnId === "done") refetchDone();
-    if (targetColumnId === "snoozed") refetchSnoozed();
   };
 
   // Handle snooze confirmation
@@ -360,7 +343,7 @@ export default function KanbanPage() {
 
     // Call API
     emailService.snoozeEmail(emailToSnooze.id, snoozeUntil).then(() => {
-      refetchSnoozed();
+      queryClient.invalidateQueries({ queryKey: ["emails"] });
     });
 
     // Reset state
@@ -527,36 +510,22 @@ export default function KanbanPage() {
               emailSummaries={summaryStates}
               onRequestSummary={handleRequestSummary}
               isLoading={isAnyLoading}
-              renderCardActions={(email) =>
-                email.mailbox_id !== "snoozed" ? (
+              // Use the columnId passed from KanbanBoard so the card actions
+              // reflect the column the card is currently rendered in (not the
+              // email.mailbox_id which may be stale). Also update mailbox_id
+              // optimistically when moving between columns.
+              renderCardActions={(email, columnId) =>
+                (columnId || email.mailbox_id) !== "snoozed" ? (
                   <>
                     <button
                       className="px-2 py-1 rounded bg-yellow-400 text-xs text-black hover:bg-yellow-500"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setKanbanEmails((prev) => {
-                          let movedEmail: Email | undefined;
-                          const newEmails = Object.fromEntries(
-                            Object.entries(prev).map(([col, emails]) => {
-                              const filtered = emails.filter((e) => {
-                                if (e.id === email.id) {
-                                  movedEmail = e;
-                                  return false;
-                                }
-                                return true;
-                              });
-                              return [col, filtered];
-                            })
-                          ) as typeof prev;
-                          if (movedEmail) {
-                            newEmails.snoozed = [
-                              movedEmail,
-                              ...newEmails.snoozed,
-                            ];
-                          }
-                          return newEmails;
+                        setEmailToSnooze({
+                          id: email.id,
+                          subject: email.subject,
                         });
-                        snoozeEmailMutation.mutate(email.id);
+                        setSnoozeDialogOpen(true);
                       }}
                     >
                       Snooze
@@ -571,9 +540,9 @@ export default function KanbanPage() {
                         let movedEmail: Email | undefined;
                         const newEmails = Object.fromEntries(
                           Object.entries(prev).map(([col, emails]) => {
-                            const filtered = emails.filter((e) => {
-                              if (e.id === email.id) {
-                                movedEmail = e;
+                            const filtered = emails.filter((ee) => {
+                              if (ee.id === email.id) {
+                                movedEmail = ee;
                                 return false;
                               }
                               return true;
@@ -582,6 +551,7 @@ export default function KanbanPage() {
                           })
                         ) as typeof prev;
                         if (movedEmail) {
+                          movedEmail.mailbox_id = "inbox";
                           newEmails.inbox = [movedEmail, ...newEmails.inbox];
                         }
                         return newEmails;
@@ -593,8 +563,8 @@ export default function KanbanPage() {
                   </button>
                 )
               }
-              onEmailClick={(emailId) => setDetailEmailId(emailId)}
-            />
+               onEmailClick={(emailId) => setDetailEmailId(emailId)}
+             />
           </div>
         </div>
 
@@ -705,33 +675,11 @@ export default function KanbanPage() {
                                 className="px-3 py-1.5 rounded bg-yellow-400 text-xs text-black hover:bg-yellow-500"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setKanbanEmails((prev) => {
-                                    let movedEmail: Email | undefined;
-                                    const newEmails = Object.fromEntries(
-                                      Object.entries(prev).map(
-                                        ([col, emails]) => {
-                                          const filtered = emails.filter(
-                                            (e) => {
-                                              if (e.id === email.id) {
-                                                movedEmail = e;
-                                                return false;
-                                              }
-                                              return true;
-                                            }
-                                          );
-                                          return [col, filtered];
-                                        }
-                                      )
-                                    ) as typeof prev;
-                                    if (movedEmail) {
-                                      newEmails.snoozed = [
-                                        movedEmail,
-                                        ...newEmails.snoozed,
-                                      ];
-                                    }
-                                    return newEmails;
+                                  setEmailToSnooze({
+                                    id: email.id,
+                                    subject: email.subject,
                                   });
-                                  snoozeEmailMutation.mutate(email.id);
+                                  setSnoozeDialogOpen(true);
                                 }}
                               >
                                 <span className="material-symbols-outlined text-xs mr-1">
@@ -763,10 +711,7 @@ export default function KanbanPage() {
                                       )
                                     ) as typeof prev;
                                     if (movedEmail) {
-                                      newEmails.inbox = [
-                                        movedEmail,
-                                        ...newEmails.inbox,
-                                      ];
+                                      newEmails.inbox = [movedEmail, ...newEmails.inbox];
                                     }
                                     return newEmails;
                                   });

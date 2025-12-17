@@ -1,4 +1,5 @@
-import { ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 
 export type SortOption = "newest" | "oldest";
 export type FilterState = {
@@ -20,69 +21,85 @@ export default function KanbanFilters({
   onFilterChange,
 }: KanbanFiltersProps) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1f2e]">
-      {/* Sort Dropdown */}
-      <div className="relative">
-        <select
-          value={sortBy}
-          onChange={(e) => onSortChange(e.target.value as SortOption)}
-          className="appearance-none pl-3 pr-8 py-1.5 rounded-lg text-sm
-            bg-gray-100 dark:bg-gray-800 
-            text-gray-700 dark:text-gray-300
-            border border-gray-200 dark:border-gray-700
-            hover:bg-gray-200 dark:hover:bg-gray-700
-            focus:outline-none focus:ring-2 focus:ring-blue-500/20
-            cursor-pointer transition-colors"
-        >
-          <option value="newest">📅 Mới nhất</option>
-          <option value="oldest">📅 Cũ nhất</option>
-        </select>
-        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0f1724]">
+      {/* Sort segmented control (pill-shaped) */}
+      <div className="flex items-center gap-0 rounded-full border bg-transparent overflow-hidden shadow-sm">
+          <Button
+              size="sm"
+              variant={sortBy === "newest" ? "default" : "ghost"}
+              onClick={() => onSortChange("newest")}
+              aria-pressed={sortBy === "newest"}
+              title="Sắp xếp: Mới nhất"
+              className="rounded-none first:rounded-l-full last:rounded-r-full px-3"
+          >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3l1.5 3L17 8l-3 1.5L12 13l-1.5-3L7 8l3-1.5L12 3z"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l.8 1.6L7.5 16l-1.7.4L5 18l-.8-1.6L2.5 16l1.7-.4L5 13z"/>
+              </svg>
+              <span className="ml-2">Mới nhất</span>
+          </Button>
+
+          <Button
+              size="sm"
+              variant={sortBy === "oldest" ? "default" : "ghost"}
+              onClick={() => onSortChange("oldest")}
+              aria-pressed={sortBy === "oldest"}
+              title="Sắp xếp: Cũ nhất"
+              className="rounded-none first:rounded-l-full last:rounded-r-full px-3"
+          >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle cx="12" cy="12" r="9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 7v5l3 2"/>
+              </svg>
+              <span className="ml-2">Cũ nhất</span>
+          </Button>
+
       </div>
 
-      {/* Filter Toggle: Unread Only */}
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={filters.unreadOnly}
-          onChange={(e) =>
-            onFilterChange({ ...filters, unreadOnly: e.target.checked })
-          }
-          className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 
-            text-blue-600 focus:ring-blue-500 focus:ring-offset-0
-            bg-gray-100 dark:bg-gray-800"
-        />
-        <span className="text-sm text-gray-700 dark:text-gray-300">
-          Chưa đọc
-        </span>
-      </label>
-
-      {/* Filter Toggle: With Attachments */}
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={filters.withAttachments}
-          onChange={(e) =>
-            onFilterChange({ ...filters, withAttachments: e.target.checked })
-          }
-          className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 
-            text-blue-600 focus:ring-blue-500 focus:ring-offset-0
-            bg-gray-100 dark:bg-gray-800"
-        />
-        <span className="text-sm text-gray-700 dark:text-gray-300">
-          📎 Có tệp đính kèm
-        </span>
-      </label>
-
-      {/* Clear Filters */}
-      {(filters.unreadOnly || filters.withAttachments) && (
-        <button
-          onClick={() => onFilterChange({ unreadOnly: false, withAttachments: false })}
-          className="text-sm text-blue-600 dark:text-blue-400 hover:underline ml-auto"
+      {/* Filter Toggles as buttons for a modern look */}
+      <div className="flex items-center gap-2">
+        <Label className="sr-only">Filters</Label>
+        <Button
+          size="sm"
+          variant={filters.unreadOnly ? "default" : "ghost"}
+          onClick={() => onFilterChange({ ...filters, unreadOnly: !filters.unreadOnly })}
+          aria-pressed={filters.unreadOnly}
+          title="Chỉ hiển thị thư chưa đọc"
         >
-          Xóa bộ lọc
-        </button>
-      )}
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+          <span className="hidden sm:inline">Chưa đọc</span>
+        </Button>
+
+        <Button
+          size="sm"
+          variant={filters.withAttachments ? "default" : "ghost"}
+          onClick={() => onFilterChange({ ...filters, withAttachments: !filters.withAttachments })}
+          aria-pressed={filters.withAttachments}
+          title="Có tệp đính kèm"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07 0 5 5 0 010-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95L9.12 18.07a2 2 0 01-2.83 0 2 2 0 010-2.83l8.49-8.49"/>
+          </svg>
+          <span className="hidden sm:inline">Có tệp</span>
+        </Button>
+      </div>
+
+      {/* Spacer and Clear Filters */}
+      <div className="ml-auto">
+        {(filters.unreadOnly || filters.withAttachments) ? (
+          <Button
+            size="sm"
+            variant="link"
+            onClick={() => onFilterChange({ unreadOnly: false, withAttachments: false })}
+          >
+            Xóa bộ lọc
+          </Button>
+        ) : (
+          <span className="text-sm text-muted-foreground hidden sm:inline"></span>
+        )}
+      </div>
     </div>
   );
 }
