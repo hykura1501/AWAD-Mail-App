@@ -58,5 +58,13 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			emails.POST("/watch", emailHandler.WatchMailbox)
 			emails.GET("/search", emailHandler.FuzzySearch)
 		}
+
+		// Search routes (protected)
+		search := api.Group("/search")
+		search.Use(delivery.AuthMiddleware(authUsecase))
+		{
+			search.POST("/semantic", emailHandler.SemanticSearch)
+			search.GET("/suggestions", emailHandler.GetSearchSuggestions)
+		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	authdomain "ga03-backend/internal/auth/domain"
 	authRepo "ga03-backend/internal/auth/repository"
 	authUsecase "ga03-backend/internal/auth/usecase"
+	emaildomain "ga03-backend/internal/email/domain"
 	emailRepo "ga03-backend/internal/email/repository"
 	emailUsecase "ga03-backend/internal/email/usecase"
 	"ga03-backend/internal/notification"
@@ -31,13 +32,14 @@ func main() {
 	}
 
 	// Auto-migrate database schemas
-	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}); err != nil {
+	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
 	// Initialize repositories (dependency injection)
 	userRepo := authRepo.NewUserRepository(db)
 	emailRepository := emailRepo.NewEmailRepository()
+	emailSyncHistoryRepo := emailRepo.NewEmailSyncHistoryRepository(db)
 
 	// Initialize SSE Manager
 	sseManager := sse.NewManager()
@@ -65,13 +67,17 @@ func main() {
 
 	// Initialize Gmail service
 	gmailService := gmail.NewService(cfg.GoogleClientID, cfg.GoogleClientSecret)
-	
+
 	// Initialize IMAP service
 	imapService := imap.NewService()
 
 	// Initialize use cases (dependency injection)
 	authUsecaseInstance := authUsecase.NewAuthUsecase(userRepo, cfg)
-	emailUsecaseInstance := emailUsecase.NewEmailUsecase(emailRepository, userRepo, gmailService, imapService, cfg, cfg.GooglePubSubTopic)
+	emailUsecaseInstance := emailUsecase.NewEmailUsecase(emailRepository, emailSyncHistoryRepo, userRepo, gmailService, imapService, cfg, cfg.GooglePubSubTopic)
+
+	// Set up email sync callback for auth usecase
+	// This will sync all emails after login/registration
+	authUsecaseInstance.SetEmailSyncCallback(emailUsecaseInstance.SyncAllEmailsForUser)
 
 	// Initialize HTTP handler
 	handler := api.NewHandler(authUsecaseInstance, emailUsecaseInstance, sseManager, cfg)

@@ -531,3 +531,91 @@ func (h *EmailHandler) FuzzySearch(c *gin.Context) {
 		Total:  total,
 	})
 }
+
+// POST /api/search/semantic
+// SemanticSearch handles semantic search over emails using vector embeddings
+func (h *EmailHandler) SemanticSearch(c *gin.Context) {
+	var req struct {
+		Query string `json:"query" binding:"required"`
+		Limit int    `json:"limit,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing or invalid query parameter"})
+		return
+	}
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	userID := userData.ID
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := 0
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	emails, total, err := h.emailUsecase.SemanticSearch(userID, req.Query, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, emaildto.EmailsResponse{
+		Emails: emails,
+		Limit:  limit,
+		Offset: offset,
+		Total:  total,
+	})
+}
+
+// GET /api/search/suggestions?q=query
+// GetSearchSuggestions returns suggestions for auto-complete
+// Suggestions are populated from relevant data (sender names, subject keywords) from inbox
+// This does NOT use semantic search - semantic search is only used when user presses Enter or clicks suggestion
+func (h *EmailHandler) GetSearchSuggestions(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing query parameter 'q'"})
+		return
+	}
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	userID := userData.ID
+
+	// Get suggestions from inbox data (sender names, subject keywords)
+	// Limit to 5 suggestions for UI
+	suggestions, err := h.emailUsecase.GetSearchSuggestions(userID, query, 5)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
+}

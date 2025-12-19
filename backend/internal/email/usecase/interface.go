@@ -26,7 +26,13 @@ type EmailUsecase interface {
 	MoveEmailToMailbox(userID, emailID, mailboxID string) error
 	SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error
 	FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
+	SemanticSearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
+	GetSearchSuggestions(userID, query string, limit int) ([]string, error)
+	StoreEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
+	UpsertEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
+	SyncAllEmailsForUser(userID string) // Sync all emails for a user to vector DB (async, non-blocking)
 	SetGeminiService(svc interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	})
+	SetVectorSearchService(svc VectorSearchService)
 }

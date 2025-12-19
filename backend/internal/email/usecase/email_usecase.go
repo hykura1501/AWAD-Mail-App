@@ -10,9 +10,11 @@ import (
 	"ga03-backend/pkg/fuzzy"
 	"ga03-backend/pkg/imap"
 	"ga03-backend/pkg/utils/crypto"
+	"log"
 	"mime/multipart"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -20,16 +22,28 @@ import (
 
 // emailUsecase implements EmailUsecase interface
 type emailUsecase struct {
-	emailRepo     repository.EmailRepository
-	userRepo      authrepo.UserRepository
-	mailProvider  emaildomain.MailProvider // Gmail Provider
-	imapProvider  *imap.IMAPService        // IMAP Provider
-	config        *config.Config
-	topicName     string
-	geminiService interface {
+	emailRepo            repository.EmailRepository
+	emailSyncHistoryRepo repository.EmailSyncHistoryRepository
+	userRepo             authrepo.UserRepository
+	mailProvider         emaildomain.MailProvider // Gmail Provider
+	imapProvider         *imap.IMAPService        // IMAP Provider
+	config               *config.Config
+	topicName            string
+	geminiService        interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	}
-	kanbanStatus map[string]string // emailID -> status
+	kanbanStatus        map[string]string // emailID -> status
+	vectorSearchService VectorSearchService
+	syncJobQueue        chan EmailSyncJob // Job queue for email sync workers
+	workerWg            sync.WaitGroup    // Wait group for workers
+}
+
+// EmailSyncJob represents a job to sync an email to vector DB
+type EmailSyncJob struct {
+	UserID  string
+	EmailID string
+	Subject string
+	Body    string
 }
 
 // SetGeminiService allows wiring GeminiService after creation
@@ -39,20 +53,28 @@ func (u *emailUsecase) SetGeminiService(svc interface {
 	u.geminiService = svc
 }
 
+// SetVectorSearchService allows wiring VectorSearchService after creation
+func (u *emailUsecase) SetVectorSearchService(svc VectorSearchService) {
+	u.vectorSearchService = svc
+}
+
 // NewEmailUsecase creates a new instance of emailUsecase
-func NewEmailUsecase(emailRepo repository.EmailRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
+func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo repository.EmailSyncHistoryRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
 	// GeminiService cần được truyền vào khi khởi tạo
 	uc := &emailUsecase{
-		emailRepo:     emailRepo,
-		userRepo:      userRepo,
-		mailProvider:  mailProvider,
-		imapProvider:  imapProvider,
-		config:        cfg,
-		topicName:     topicName,
-		geminiService: nil, // cần set sau
-		kanbanStatus:  make(map[string]string),
+		emailRepo:            emailRepo,
+		emailSyncHistoryRepo: emailSyncHistoryRepo,
+		userRepo:             userRepo,
+		mailProvider:         mailProvider,
+		imapProvider:         imapProvider,
+		config:               cfg,
+		topicName:            topicName,
+		geminiService:        nil, // cần set sau
+		kanbanStatus:         make(map[string]string),
+		syncJobQueue:         make(chan EmailSyncJob, 1000), // Buffered channel for jobs
 	}
 	uc.startSnoozeChecker()
+	uc.startSyncWorkers(5) // Start 5 worker goroutines
 	return uc
 }
 
@@ -63,6 +85,54 @@ func (u *emailUsecase) startSnoozeChecker() {
 			u.checkSnoozedEmails()
 		}
 	}()
+}
+
+// startSyncWorkers starts worker goroutines to process email sync jobs
+func (u *emailUsecase) startSyncWorkers(workerCount int) {
+	for i := 0; i < workerCount; i++ {
+		u.workerWg.Add(1)
+		go u.syncWorker(i)
+	}
+}
+
+// syncWorker processes email sync jobs from the queue
+func (u *emailUsecase) syncWorker(workerID int) {
+	defer u.workerWg.Done()
+
+	for job := range u.syncJobQueue {
+		if u.vectorSearchService == nil {
+			continue
+		}
+
+		// Check if email has already been synced to avoid unnecessary API calls
+		isSynced, err := u.emailSyncHistoryRepo.IsEmailSynced(job.UserID, job.EmailID)
+		if err != nil {
+			fmt.Printf("[Worker %d] Failed to check sync history for email %s: %v\n", workerID, job.EmailID, err)
+			continue
+		}
+
+		if isSynced {
+			// Email already synced, skip
+			fmt.Printf("[Worker %d] Email %s already synced, skipping\n", workerID, job.EmailID)
+			continue
+		}
+
+		// Email not synced yet, upsert to vector DB
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err = u.UpsertEmailEmbedding(ctx, job.UserID, job.EmailID, job.Subject, job.Body)
+		cancel()
+
+		if err != nil {
+			fmt.Printf("[Worker %d] Failed to sync email %s to vector DB: %v\n", workerID, job.EmailID, err)
+		} else {
+			// Mark email as synced in PostgreSQL
+			if markErr := u.emailSyncHistoryRepo.MarkEmailAsSynced(job.UserID, job.EmailID); markErr != nil {
+				fmt.Printf("[Worker %d] Failed to mark email %s as synced: %v\n", workerID, job.EmailID, markErr)
+			} else {
+				fmt.Printf("[Worker %d] Successfully synced email %s to vector DB\n", workerID, job.EmailID)
+			}
+		}
+	}
 }
 
 func (u *emailUsecase) checkSnoozedEmails() {
@@ -126,6 +196,9 @@ func (u *emailUsecase) SummarizeEmail(ctx context.Context, emailID string) (stri
 			return "", fmt.Errorf("failed to decrypt password: %w", err)
 		}
 		email, err = u.imapProvider.GetEmailByID(ctx, user.ImapServer, user.ImapPort, user.Email, decryptedPass, emailID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get email: %w", err)
+		}
 	} else {
 		accessToken, refreshToken, _ := u.getUserTokens(userID)
 		if accessToken != "" && u.mailProvider != nil {
@@ -245,7 +318,14 @@ func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offse
 	}
 
 	ctx := context.Background()
-	return u.mailProvider.GetEmails(ctx, accessToken, refreshToken, mailboxID, limit, offset, query, u.makeTokenUpdateCallback(userID))
+	emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, mailboxID, limit, offset, query, u.makeTokenUpdateCallback(userID))
+	if err == nil {
+		// Sync emails to vector DB asynchronously (don't block the request)
+		for _, email := range emails {
+			u.syncEmailToVectorDB(userID, email)
+		}
+	}
+	return emails, total, err
 }
 
 func (u *emailUsecase) GetAttachment(userID, messageID, attachmentID string) (*emaildomain.Attachment, []byte, error) {
@@ -277,7 +357,12 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt password: %w", err)
 		}
-		return u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
+		email, err := u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
+		if err == nil && email != nil {
+			// Sync email to vector DB asynchronously
+			u.syncEmailToVectorDB(userID, email)
+		}
+		return email, err
 	}
 
 	// Gmail Handler
@@ -292,7 +377,12 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 	}
 
 	ctx := context.Background()
-	return u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
+	email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
+	if err == nil && email != nil {
+		// Sync email to vector DB asynchronously
+		u.syncEmailToVectorDB(userID, email)
+	}
+	return email, err
 }
 
 func (u *emailUsecase) MarkEmailAsRead(userID, id string) error {
@@ -566,6 +656,11 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			return nil, 0, err
 		}
 
+		// Sync emails to vector DB asynchronously
+		for _, email := range emails {
+			u.syncEmailToVectorDB(userID, email)
+		}
+
 		var filtered []*emaildomain.Email
 		if status == "inbox" {
 			for _, email := range emails {
@@ -601,6 +696,12 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// Sync emails to vector DB asynchronously
+	for _, email := range emails {
+		u.syncEmailToVectorDB(userID, email)
+	}
+
 	var filtered []*emaildomain.Email
 	if status == "inbox" {
 		for _, email := range emails {
@@ -822,4 +923,134 @@ func (u *emailUsecase) FuzzySearch(userID, query string, limit, offset int) ([]*
 	}
 
 	return result, total, nil
+}
+
+// SyncAllEmailsForUser syncs all emails for a user to vector DB (async, non-blocking)
+// This is typically called after login/registration to index all existing emails
+func (u *emailUsecase) SyncAllEmailsForUser(userID string) {
+	if u.vectorSearchService == nil {
+		log.Printf("Vector search service not available, skipping email sync for user %s", userID)
+		return
+	}
+
+	// Run in background goroutine to not block the caller
+	go func() {
+		// Wait a bit to ensure token is saved to DB after login
+		time.Sleep(2 * time.Second)
+
+		log.Printf("Starting full email sync for user %s", userID)
+
+		// Check user and provider first
+		user, err := u.userRepo.FindByID(userID)
+		if err != nil {
+			log.Printf("Failed to get user %s: %v", userID, err)
+			return
+		}
+		if user == nil {
+			log.Printf("User %s not found", userID)
+			return
+		}
+
+		// Only sync for Google and IMAP providers (skip email provider as it has no external email access)
+		if user.Provider != "google" && user.Provider != "imap" {
+			log.Printf("Skipping email sync for user %s: provider %s doesn't have email access", userID, user.Provider)
+			return
+		}
+
+		// For Google provider, check if access token exists
+		if user.Provider == "google" {
+			if user.AccessToken == "" {
+				log.Printf("Skipping email sync for user %s: no access token available", userID)
+				return
+			}
+		}
+
+		// Get all mailboxes for the user
+		mailboxes, err := u.GetAllMailboxes(userID)
+		if err != nil {
+			// Check if error is about insufficient scopes
+			errStr := err.Error()
+			if strings.Contains(errStr, "insufficient authentication scopes") ||
+				strings.Contains(errStr, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+				strings.Contains(errStr, "Insufficient Permission") {
+				log.Printf("Skipping email sync for user %s: access token doesn't have Gmail scopes. User may need to re-authorize with Gmail permissions.", userID)
+				return
+			}
+			log.Printf("Failed to get mailboxes for user %s: %v", userID, err)
+			return
+		}
+
+		if len(mailboxes) == 0 {
+			log.Printf("No mailboxes found for user %s", userID)
+			return
+		}
+
+		// Common mailboxes to sync (prioritize these)
+		priorityMailboxes := []string{"INBOX", "SENT", "DRAFT"}
+		syncedMailboxes := make(map[string]bool)
+
+		// First, sync priority mailboxes
+		for _, mailboxID := range priorityMailboxes {
+			for _, mb := range mailboxes {
+				if mb.ID == mailboxID {
+					u.syncMailboxEmails(userID, mailboxID)
+					syncedMailboxes[mailboxID] = true
+					break
+				}
+			}
+		}
+
+		// Then sync other mailboxes
+		for _, mb := range mailboxes {
+			if !syncedMailboxes[mb.ID] {
+				u.syncMailboxEmails(userID, mb.ID)
+			}
+		}
+
+		log.Printf("Completed full email sync for user %s", userID)
+	}()
+}
+
+// syncMailboxEmails syncs all emails from a specific mailbox
+func (u *emailUsecase) syncMailboxEmails(userID, mailboxID string) {
+	const batchSize = 100 // Fetch 100 emails at a time
+	offset := 0
+
+	for {
+		// Fetch batch of emails
+		emails, total, err := u.GetEmailsByMailbox(userID, mailboxID, batchSize, offset, "")
+		if err != nil {
+			// Check if error is about insufficient scopes
+			errStr := err.Error()
+			if strings.Contains(errStr, "insufficient authentication scopes") ||
+				strings.Contains(errStr, "ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+				strings.Contains(errStr, "Insufficient Permission") {
+				log.Printf("Stopping email sync for mailbox %s (user %s): access token doesn't have Gmail scopes", mailboxID, userID)
+				break
+			}
+			log.Printf("Failed to fetch emails from mailbox %s for user %s (offset %d): %v", mailboxID, userID, offset, err)
+			break
+		}
+
+		if len(emails) == 0 {
+			// No more emails
+			break
+		}
+
+		// Sync each email to vector DB
+		// Note: GetEmailsByMailbox already calls syncEmailToVectorDB, but we want to ensure
+		// all emails are synced even if they were fetched before
+		for _, email := range emails {
+			u.syncEmailToVectorDB(userID, email)
+		}
+
+		log.Printf("Synced %d emails from mailbox %s for user %s (offset %d/%d)", len(emails), mailboxID, userID, offset, total)
+
+		offset += len(emails)
+
+		// Stop if we've fetched all emails
+		if offset >= total || len(emails) < batchSize {
+			break
+		}
+	}
 }

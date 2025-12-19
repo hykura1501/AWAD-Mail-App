@@ -40,11 +40,11 @@ export default function SearchPage() {
     setSearchParams(params, { replace: true });
   }, [searchQuery, currentPage, setSearchParams]);
 
-  // Fetch search results with pagination (use searchQuery, not query)
+  // Fetch search results with pagination using semantic search (when user presses Enter or clicks suggestion)
   const { data, isLoading, error } = useQuery({
     queryKey: ["searchEmails", searchQuery, ITEMS_PER_PAGE, offset],
     queryFn: () =>
-      emailService.fuzzySearch(searchQuery, ITEMS_PER_PAGE, offset),
+      emailService.semanticSearch(searchQuery, ITEMS_PER_PAGE, offset),
     enabled: searchQuery.trim().length > 0,
   });
 
@@ -103,8 +103,9 @@ export default function SearchPage() {
             onSearch={handleSearch}
             onClear={handleClear}
             isSearching={isLoading}
-            placeholder="Tìm kiếm email (hỗ trợ fuzzy)..."
+            placeholder="Tìm kiếm email (semantic search)..."
             className="w-full"
+            disableSuggestions={true}
           />
         </div>
       </div>

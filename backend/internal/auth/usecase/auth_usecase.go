@@ -25,8 +25,9 @@ import (
 
 // authUsecase implements AuthUsecase interface
 type authUsecase struct {
-	userRepo repository.UserRepository
-	config   *config.Config
+	userRepo          repository.UserRepository
+	config            *config.Config
+	emailSyncCallback EmailSyncCallback // Optional callback to sync emails after auth
 }
 
 // NewAuthUsecase creates a new instance of authUsecase
@@ -35,6 +36,11 @@ func NewAuthUsecase(userRepo repository.UserRepository, cfg *config.Config) Auth
 		userRepo: userRepo,
 		config:   cfg,
 	}
+}
+
+// SetEmailSyncCallback sets the callback function to sync emails after login/registration
+func (u *authUsecase) SetEmailSyncCallback(callback EmailSyncCallback) {
+	u.emailSyncCallback = callback
 }
 
 func (u *authUsecase) Login(req *authdto.LoginRequest) (*authdto.TokenResponse, error) {
@@ -53,6 +59,11 @@ func (u *authUsecase) Login(req *authdto.LoginRequest) (*authdto.TokenResponse, 
 
 	if !repository.CheckPasswordHash(req.Password, user.Password) {
 		return nil, errors.New("invalid email or password")
+	}
+
+	// Sync all emails for user in background (non-blocking)
+	if u.emailSyncCallback != nil {
+		u.emailSyncCallback(user.ID)
 	}
 
 	return u.generateTokens(user)
@@ -97,7 +108,7 @@ func (u *authUsecase) IMAPLogin(req *authdto.ImapLoginRequest) (*authdto.TokenRe
 		user.ImapServer = req.ImapServer
 		user.ImapPort = req.ImapPort
 		user.ImapPassword = encryptedPass
-		
+
 		// If the user was previously a different provider, we might want to handle that
 		// For now, we just update the provider to imap if it wasn't
 		if user.Provider != "imap" {
@@ -113,6 +124,11 @@ func (u *authUsecase) IMAPLogin(req *authdto.ImapLoginRequest) (*authdto.TokenRe
 	resp, err := u.generateTokens(user)
 	if err != nil {
 		return nil, err
+	}
+
+	// Sync all emails for user in background (non-blocking)
+	if u.emailSyncCallback != nil {
+		u.emailSyncCallback(user.ID)
 	}
 
 	if user.Password == "" {
@@ -166,6 +182,11 @@ func (u *authUsecase) Register(req *authdto.RegisterRequest) (*authdto.TokenResp
 		return nil, err
 	}
 
+	// Sync all emails for user in background (non-blocking)
+	if u.emailSyncCallback != nil {
+		u.emailSyncCallback(user.ID)
+	}
+
 	return u.generateTokens(user)
 }
 
@@ -180,22 +201,22 @@ type GoogleTokenInfo struct {
 
 func (u *authUsecase) GoogleSignIn(code string, scope []string) (*authdto.TokenResponse, error) {
 	conf := &oauth2.Config{
-        ClientID:     u.config.GoogleClientID,
-        ClientSecret: u.config.GoogleClientSecret,
-        RedirectURL:  "postmessage", 
-        Scopes:      scope,
-        Endpoint: google.Endpoint,
-    }
+		ClientID:     u.config.GoogleClientID,
+		ClientSecret: u.config.GoogleClientSecret,
+		RedirectURL:  "postmessage",
+		Scopes:       scope,
+		Endpoint:     google.Endpoint,
+	}
 	token, err := conf.Exchange(context.Background(), code)
-    if err != nil {
-        return nil, fmt.Errorf("google oauth exchange failed: %v", err)
-    }
+	if err != nil {
+		return nil, fmt.Errorf("google oauth exchange failed: %v", err)
+	}
 	accessToken := token.AccessToken
-    refreshToken := token.RefreshToken
+	refreshToken := token.RefreshToken
 	tokenExpiry := token.Expiry
 
 	url := "https://www.googleapis.com/oauth2/v3/userinfo"
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, errors.New("failed to create request: " + err.Error())
@@ -246,7 +267,7 @@ func (u *authUsecase) GoogleSignIn(code string, scope []string) (*authdto.TokenR
 			Provider:     "google",
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
-			TokenExpiry: tokenExpiry,
+			TokenExpiry:  tokenExpiry,
 		}
 		if err := u.userRepo.Create(user); err != nil {
 			fmt.Printf("Error creating user: %v\n", err)
@@ -273,6 +294,12 @@ func (u *authUsecase) GoogleSignIn(code string, scope []string) (*authdto.TokenR
 		fmt.Printf("Error generating tokens: %v\n", err)
 		return nil, err
 	}
+
+	// Sync all emails for user in background (non-blocking)
+	if u.emailSyncCallback != nil {
+		u.emailSyncCallback(user.ID)
+	}
+
 	fmt.Println("Tokens generated successfully")
 	return tokenResp, nil
 }
@@ -327,7 +354,7 @@ func (u *authUsecase) RefreshToken(refreshToken string) (*authdto.TokenResponse,
 	// Check if refresh token is close to expiry (within 24 hours)
 	// If so, rotate it to extend session
 	shouldRotateRefreshToken := storedToken.ExpiresAt.Sub(time.Now()) < 24*time.Hour
-	
+
 	if shouldRotateRefreshToken {
 		// Generate new refresh token and replace old one
 		newRefreshToken, err := u.generateRefreshToken(user)

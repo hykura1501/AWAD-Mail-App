@@ -1,8 +1,11 @@
 package api
 
 import (
+	"log"
+
 	authUsecase "ga03-backend/internal/auth/usecase"
 	emailUsecase "ga03-backend/internal/email/usecase"
+	"ga03-backend/pkg/chroma"
 	"ga03-backend/pkg/config"
 	gemini "ga03-backend/pkg/gemini"
 	"ga03-backend/pkg/sse"
@@ -22,6 +25,20 @@ func NewHandler(authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.E
 	geminiSvc := gemini.NewGeminiService(cfg.GeminiApiKey)
 	// Gán GeminiService vào emailUsecase qua interface
 	emailUsecase.SetGeminiService(geminiSvc)
+
+	// Initialize Chroma client for vector search
+	if cfg.ChromaAPIKey != "" {
+		chromaClient, err := chroma.NewChromaClient(cfg)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize Chroma client: %v. Semantic search will not be available.", err)
+		} else {
+			emailUsecase.SetVectorSearchService(chromaClient)
+			log.Println("Chroma client initialized successfully")
+		}
+	} else {
+		log.Println("Warning: CHROMA_API_KEY not set. Semantic search will not be available.")
+	}
+
 	return &Handler{
 		authUsecase:  authUsecase,
 		emailUsecase: emailUsecase,

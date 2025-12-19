@@ -26,6 +26,9 @@ type Config struct {
 	DBSSLMode          string
 	GeminiApiKey       string
 	EncryptionKey      string // 32-byte key for AES encryption
+	ChromaAPIKey       string
+	ChromaTenant       string
+	ChromaDatabase     string
 }
 
 func Load() *Config {
@@ -65,6 +68,9 @@ func Load() *Config {
 		DBSSLMode:          getEnv("DB_SSLMODE", "disable"),
 		GeminiApiKey:       os.Getenv("GEMINI_API_KEY"),
 		EncryptionKey:      getEnv("ENCRYPTION_KEY", "12345678901234567890123456789012"), // Default for dev only
+		ChromaAPIKey:       os.Getenv("CHROMA_API_KEY"),
+		ChromaTenant:       os.Getenv("CHROMA_TENANT"),
+		ChromaDatabase:     os.Getenv("CHROMA_DATABASE"),
 	}
 }
 
