@@ -32,7 +32,7 @@ func main() {
 	}
 
 	// Auto-migrate database schemas
-	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}); err != nil {
+	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}, &emaildomain.KanbanColumn{}); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
@@ -40,6 +40,7 @@ func main() {
 	userRepo := authRepo.NewUserRepository(db)
 	emailRepository := emailRepo.NewEmailRepository()
 	emailSyncHistoryRepo := emailRepo.NewEmailSyncHistoryRepository(db)
+	kanbanColumnRepo := emailRepo.NewKanbanColumnRepository(db)
 
 	// Initialize SSE Manager
 	sseManager := sse.NewManager()
@@ -73,7 +74,7 @@ func main() {
 
 	// Initialize use cases (dependency injection)
 	authUsecaseInstance := authUsecase.NewAuthUsecase(userRepo, cfg)
-	emailUsecaseInstance := emailUsecase.NewEmailUsecase(emailRepository, emailSyncHistoryRepo, userRepo, gmailService, imapService, cfg, cfg.GooglePubSubTopic)
+	emailUsecaseInstance := emailUsecase.NewEmailUsecase(emailRepository, emailSyncHistoryRepo, kanbanColumnRepo, userRepo, gmailService, imapService, cfg, cfg.GooglePubSubTopic)
 
 	// Set up email sync callback for auth usecase
 	// This will sync all emails after login/registration

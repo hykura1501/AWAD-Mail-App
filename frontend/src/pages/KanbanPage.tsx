@@ -5,7 +5,7 @@ import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
 import { getAccessToken } from "@/lib/api-client";
-import type { Email } from "@/types/email";
+import type { Email, KanbanColumnConfig } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import EmailDetail from "@/components/inbox/EmailDetail";
@@ -16,6 +16,8 @@ import type { KanbanColumn } from "@/components/kanban/KanbanBoard";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
 import KanbanFilters, { type SortOption, type FilterState } from "@/components/kanban/KanbanFilters";
 import { SnoozeDialog } from "@/components/inbox/SnoozeDialog";
+import KanbanSettings from "@/components/kanban/KanbanSettings";
+import { Settings } from "lucide-react";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
@@ -82,6 +84,21 @@ export default function KanbanPage() {
     navigate(`/${id}`);
   };
 
+  // Settings modal state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Load Kanban columns configuration
+  const { data: kanbanColumnConfigs = [] } = useQuery<KanbanColumnConfig[]>({
+    queryKey: ["kanbanColumns"],
+    queryFn: () => emailService.getKanbanColumns(),
+  });
+
+  // Load mailboxes for label mapping in settings
+  const { data: mailboxes = [] } = useQuery({
+    queryKey: ["mailboxes"],
+    queryFn: () => emailService.getAllMailboxes(),
+  });
+
   // State cho popup chi tiết email
   const [detailEmailId, setDetailEmailId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"mailbox" | "kanban">("kanban");
@@ -142,11 +159,12 @@ export default function KanbanPage() {
   const limit = 20;
 
   // State emails cho từng cột (optimistic update)
-  const [kanbanEmails, setKanbanEmails] = useState({
-    inbox: [] as Email[],
-    todo: [] as Email[],
-    done: [] as Email[],
-    snoozed: [] as Email[],
+  // Use Record to allow dynamic column IDs (including custom columns)
+  const [kanbanEmails, setKanbanEmails] = useState<Record<string, Email[]>>({
+    inbox: [],
+    todo: [],
+    done: [],
+    snoozed: [],
   });
 
   // Sorting and filtering state
@@ -291,25 +309,28 @@ export default function KanbanPage() {
     setKanbanEmails((prev) => {
       // Tìm email trong tất cả các cột
       let movedEmail: Email | undefined;
-      const newEmails = Object.fromEntries(
-        Object.entries(prev).map(([col, emails]) => {
-          const filtered = emails.filter((e) => {
-            if (e.id === emailId) {
-              movedEmail = e;
-              return false;
-            }
-            return true;
-          });
-          return [col, filtered];
-        })
-      ) as typeof prev;
-      // Thêm email vào cột mới
+      const newEmails: Record<string, Email[]> = {};
+      
+      // Remove email from all columns
+      Object.entries(prev).forEach(([col, emails]) => {
+        const filtered = emails.filter((e) => {
+          if (e.id === emailId) {
+            movedEmail = e;
+            return false;
+          }
+          return true;
+        });
+        newEmails[col] = filtered;
+      });
+      
+      // Thêm email vào cột mới (initialize as empty array if column doesn't exist)
       if (movedEmail) {
-        newEmails[targetColumnId as keyof typeof newEmails] = [
-          movedEmail,
-          ...newEmails[targetColumnId as keyof typeof newEmails],
-        ];
+        if (!newEmails[targetColumnId]) {
+          newEmails[targetColumnId] = [];
+        }
+        newEmails[targetColumnId] = [movedEmail, ...newEmails[targetColumnId]];
       }
+      
       return newEmails;
     });
     // Call API ngầm
@@ -323,20 +344,26 @@ export default function KanbanPage() {
     // Optimistic update
     setKanbanEmails((prev) => {
       let movedEmail: Email | undefined;
-      const newEmails = Object.fromEntries(
-        Object.entries(prev).map(([col, emails]) => {
-          const filtered = emails.filter((e) => {
-            if (e.id === emailToSnooze.id) {
-              movedEmail = e;
-              return false;
-            }
-            return true;
-          });
-          return [col, filtered];
-        })
-      ) as typeof prev;
+      const newEmails: Record<string, Email[]> = {};
+      
+      // Remove email from all columns
+      Object.entries(prev).forEach(([col, emails]) => {
+        const filtered = emails.filter((e) => {
+          if (e.id === emailToSnooze.id) {
+            movedEmail = e;
+            return false;
+          }
+          return true;
+        });
+        newEmails[col] = filtered;
+      });
+      
+      // Thêm email vào cột snoozed (ensure it exists)
       if (movedEmail) {
-        newEmails.snoozed = [movedEmail, ...newEmails.snoozed];
+        if (!newEmails["snoozed"]) {
+          newEmails["snoozed"] = [];
+        }
+        newEmails["snoozed"] = [movedEmail, ...newEmails["snoozed"]];
       }
       return newEmails;
     });
@@ -363,7 +390,8 @@ export default function KanbanPage() {
       return result;
     };
 
-    return [
+    // Default columns that always exist
+    const defaultColumns: KanbanColumn[] = [
       {
         id: "inbox",
         title: "Inbox",
@@ -393,7 +421,33 @@ export default function KanbanPage() {
         limit,
       },
     ];
-  }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit]);
+
+    // Get default column IDs to exclude from custom columns (to avoid duplicates)
+    const defaultColumnIds = new Set(defaultColumns.map((col) => col.id));
+
+    // Add custom columns from configuration (excluding default columns)
+    const customColumns = kanbanColumnConfigs
+      .filter((config) => !defaultColumnIds.has(config.column_id))
+      .sort((a, b) => a.order - b.order)
+      .map((config) => {
+        const columnId = config.column_id;
+        const emailsKey = columnId as keyof typeof kanbanEmails;
+        const offsetKey = columnId as keyof typeof kanbanOffsets;
+        const emails = kanbanEmails[emailsKey] || [];
+        const offset = kanbanOffsets[offsetKey] || 0;
+
+        return {
+          id: config.column_id,
+          title: config.name,
+          emails: processEmails(emails),
+          offset,
+          limit,
+        };
+      });
+
+    // Return default columns first, then custom columns
+    return [...defaultColumns, ...customColumns];
+  }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit, kanbanColumnConfigs]);
 
   useEffect(() => {
     if (user) {
@@ -482,7 +536,16 @@ export default function KanbanPage() {
             Email Client AI - Kanban
           </span>
         </div>
-        <KanbanToggle isKanban={true} onToggle={() => navigate("/inbox")} />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            title="Kanban Settings"
+          >
+            <Settings className="h-5 w-5 text-gray-700 dark:text-gray-300" />
+          </button>
+          <KanbanToggle isKanban={true} onToggle={() => navigate("/inbox")} />
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -875,6 +938,13 @@ export default function KanbanPage() {
         onOpenChange={setSnoozeDialogOpen}
         onConfirm={handleSnoozeConfirm}
         emailSubject={emailToSnooze?.subject}
+      />
+
+      {/* Kanban Settings Modal */}
+      <KanbanSettings
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        availableLabels={mailboxes.map((mb) => ({ id: mb.id, name: mb.name }))}
       />
     </div>
   );

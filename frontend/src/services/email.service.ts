@@ -1,5 +1,10 @@
 import apiClient from "@/lib/api-client";
-import type { Mailbox, Email, EmailsResponse } from "@/types/email";
+import type {
+  Mailbox,
+  Email,
+  EmailsResponse,
+  KanbanColumnConfig,
+} from "@/types/email";
 
 export const emailService = {
   getEmailsByStatus: async (
@@ -150,5 +155,44 @@ export const emailService = {
       }
     );
     return response.data.suggestions;
+  },
+
+  // Kanban Column Management
+  getKanbanColumns: async (): Promise<KanbanColumnConfig[]> => {
+    const response = await apiClient.get<{ columns: KanbanColumnConfig[] }>(
+      "/kanban/columns"
+    );
+    return response.data.columns;
+  },
+
+  createKanbanColumn: async (
+    column: Omit<KanbanColumnConfig, "id" | "user_id" | "created_at" | "updated_at">
+  ): Promise<KanbanColumnConfig> => {
+    const response = await apiClient.post<{ column: KanbanColumnConfig }>(
+      "/kanban/columns",
+      column
+    );
+    return response.data.column;
+  },
+
+  updateKanbanColumn: async (
+    columnId: string,
+    column: Partial<KanbanColumnConfig>
+  ): Promise<KanbanColumnConfig> => {
+    const response = await apiClient.put<{ column: KanbanColumnConfig }>(
+      `/kanban/columns/${columnId}`,
+      column
+    );
+    return response.data.column;
+  },
+
+  deleteKanbanColumn: async (columnId: string): Promise<void> => {
+    await apiClient.delete(`/kanban/columns/${columnId}`);
+  },
+
+  updateKanbanColumnOrders: async (
+    orders: Record<string, number>
+  ): Promise<void> => {
+    await apiClient.put("/kanban/columns/orders", { orders });
   },
 };

@@ -24,6 +24,7 @@ import (
 type emailUsecase struct {
 	emailRepo            repository.EmailRepository
 	emailSyncHistoryRepo repository.EmailSyncHistoryRepository
+	kanbanColumnRepo     repository.KanbanColumnRepository
 	userRepo             authrepo.UserRepository
 	mailProvider         emaildomain.MailProvider // Gmail Provider
 	imapProvider         *imap.IMAPService        // IMAP Provider
@@ -59,11 +60,12 @@ func (u *emailUsecase) SetVectorSearchService(svc VectorSearchService) {
 }
 
 // NewEmailUsecase creates a new instance of emailUsecase
-func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo repository.EmailSyncHistoryRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
+func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo repository.EmailSyncHistoryRepository, kanbanColumnRepo repository.KanbanColumnRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
 	// GeminiService cần được truyền vào khi khởi tạo
 	uc := &emailUsecase{
 		emailRepo:            emailRepo,
 		emailSyncHistoryRepo: emailSyncHistoryRepo,
+		kanbanColumnRepo:     kanbanColumnRepo,
 		userRepo:             userRepo,
 		mailProvider:         mailProvider,
 		imapProvider:         imapProvider,
@@ -104,14 +106,14 @@ func (u *emailUsecase) syncWorker(workerID int) {
 			continue
 		}
 
-		// Check if email has already been synced to avoid unnecessary API calls
-		isSynced, err := u.emailSyncHistoryRepo.IsEmailSynced(job.UserID, job.EmailID)
+		// Check if email has already been synced (optimized: 1 query instead of 2)
+		wasAlreadySynced, err := u.emailSyncHistoryRepo.EnsureEmailSynced(job.UserID, job.EmailID)
 		if err != nil {
 			fmt.Printf("[Worker %d] Failed to check sync history for email %s: %v\n", workerID, job.EmailID, err)
 			continue
 		}
 
-		if isSynced {
+		if wasAlreadySynced {
 			// Email already synced, skip
 			fmt.Printf("[Worker %d] Email %s already synced, skipping\n", workerID, job.EmailID)
 			continue
@@ -125,12 +127,7 @@ func (u *emailUsecase) syncWorker(workerID int) {
 		if err != nil {
 			fmt.Printf("[Worker %d] Failed to sync email %s to vector DB: %v\n", workerID, job.EmailID, err)
 		} else {
-			// Mark email as synced in PostgreSQL
-			if markErr := u.emailSyncHistoryRepo.MarkEmailAsSynced(job.UserID, job.EmailID); markErr != nil {
-				fmt.Printf("[Worker %d] Failed to mark email %s as synced: %v\n", workerID, job.EmailID, markErr)
-			} else {
-				fmt.Printf("[Worker %d] Successfully synced email %s to vector DB\n", workerID, job.EmailID)
-			}
+			fmt.Printf("[Worker %d] Successfully synced email %s to vector DB\n", workerID, job.EmailID)
 		}
 	}
 }
@@ -610,10 +607,19 @@ func (u *emailUsecase) WatchMailbox(userID string) error {
 
 // Move email to another mailbox (Kanban drag & drop)
 func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID string) error {
-	accessToken, _, err := u.getUserTokens(userID)
+	user, err := u.userRepo.FindByID(userID)
 	if err != nil {
 		return err
 	}
+	if user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	accessToken, refreshToken, err := u.getUserTokens(userID)
+	if err != nil {
+		return err
+	}
+
 	if accessToken == "" {
 		// Fallback to local storage
 		email, err := u.emailRepo.GetEmailByID(emailID)
@@ -626,8 +632,41 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID string) err
 		email.MailboxID = mailboxID
 		return u.emailRepo.UpdateEmail(email)
 	}
-	// Nếu là email thật từ Gmail, lưu trạng thái Kanban vào map
-	u.kanbanStatus[emailID] = mailboxID // mailboxID ở đây là status Kanban
+
+	// For Gmail provider, sync labels based on Kanban column configuration
+	if user.Provider == "google" && u.mailProvider != nil {
+		// Get column configuration
+		column, err := u.kanbanColumnRepo.GetColumnByID(userID, mailboxID)
+		if err != nil {
+			return fmt.Errorf("failed to get column config: %w", err)
+		}
+
+		if column != nil {
+			// Prepare label IDs to add and remove
+			addLabelIDs := []string{}
+			removeLabelIDs := []string{}
+
+			if column.GmailLabelID != "" {
+				addLabelIDs = append(addLabelIDs, column.GmailLabelID)
+			}
+
+			if len(column.RemoveLabelIDs) > 0 {
+				removeLabelIDs = append(removeLabelIDs, []string(column.RemoveLabelIDs)...)
+			}
+
+			// Apply label changes via Gmail API
+			if len(addLabelIDs) > 0 || len(removeLabelIDs) > 0 {
+				ctx := context.Background()
+				err = u.mailProvider.ModifyMessageLabels(ctx, accessToken, refreshToken, emailID, addLabelIDs, removeLabelIDs, u.makeTokenUpdateCallback(userID))
+				if err != nil {
+					return fmt.Errorf("failed to modify message labels: %w", err)
+				}
+			}
+		}
+	}
+
+	// Update local Kanban status map
+	u.kanbanStatus[emailID] = mailboxID
 	return nil
 }
 
@@ -951,6 +990,12 @@ func (u *emailUsecase) SyncAllEmailsForUser(userID string) {
 			return
 		}
 
+		// Check if emails have already been synced
+		if user.EmailsSynced {
+			log.Printf("Emails already synced for user %s, skipping", userID)
+			return
+		}
+
 		// Only sync for Google and IMAP providers (skip email provider as it has no external email access)
 		if user.Provider != "google" && user.Provider != "imap" {
 			log.Printf("Skipping email sync for user %s: provider %s doesn't have email access", userID, user.Provider)
@@ -1007,6 +1052,14 @@ func (u *emailUsecase) SyncAllEmailsForUser(userID string) {
 			}
 		}
 
+		// Mark user as synced after successful completion
+		user.EmailsSynced = true
+		if updateErr := u.userRepo.Update(user); updateErr != nil {
+			log.Printf("Failed to mark user %s as synced: %v", userID, updateErr)
+		} else {
+			log.Printf("Marked user %s as emails synced", userID)
+		}
+
 		log.Printf("Completed full email sync for user %s", userID)
 	}()
 }
@@ -1053,4 +1106,31 @@ func (u *emailUsecase) syncMailboxEmails(userID, mailboxID string) {
 			break
 		}
 	}
+}
+
+// GetKanbanColumns gets all Kanban columns for a user
+func (u *emailUsecase) GetKanbanColumns(userID string) ([]*emaildomain.KanbanColumn, error) {
+	return u.kanbanColumnRepo.GetColumnsByUserID(userID)
+}
+
+// CreateKanbanColumn creates a new Kanban column
+func (u *emailUsecase) CreateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error {
+	column.UserID = userID
+	return u.kanbanColumnRepo.CreateColumn(column)
+}
+
+// UpdateKanbanColumn updates a Kanban column
+func (u *emailUsecase) UpdateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error {
+	column.UserID = userID
+	return u.kanbanColumnRepo.UpdateColumn(column)
+}
+
+// DeleteKanbanColumn deletes a Kanban column
+func (u *emailUsecase) DeleteKanbanColumn(userID, columnID string) error {
+	return u.kanbanColumnRepo.DeleteColumn(userID, columnID)
+}
+
+// UpdateKanbanColumnOrders updates the order of multiple Kanban columns
+func (u *emailUsecase) UpdateKanbanColumnOrders(userID string, orders map[string]int) error {
+	return u.kanbanColumnRepo.UpdateColumnOrders(userID, orders)
 }

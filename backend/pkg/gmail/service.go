@@ -545,6 +545,32 @@ func (s *Service) ArchiveEmail(ctx context.Context, accessToken, refreshToken, e
 	return nil
 }
 
+// ModifyMessageLabels adds and/or removes labels from a message
+func (s *Service) ModifyMessageLabels(ctx context.Context, accessToken, refreshToken, messageID string, addLabelIDs, removeLabelIDs []string, onTokenRefresh TokenUpdateFunc) error {
+	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
+	if err != nil {
+		return err
+	}
+
+	user := "me"
+	modifyReq := &gmail.ModifyMessageRequest{}
+
+	if len(addLabelIDs) > 0 {
+		modifyReq.AddLabelIds = addLabelIDs
+	}
+
+	if len(removeLabelIDs) > 0 {
+		modifyReq.RemoveLabelIds = removeLabelIDs
+	}
+
+	_, err = srv.Users.Messages.Modify(user, messageID, modifyReq).Do()
+	if err != nil {
+		return fmt.Errorf("unable to modify message labels: %v", err)
+	}
+
+	return nil
+}
+
 // Watch sets up push notifications for the user's mailbox
 func (s *Service) Watch(ctx context.Context, accessToken, refreshToken string, topicName string, onTokenRefresh TokenUpdateFunc) error {
 	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)

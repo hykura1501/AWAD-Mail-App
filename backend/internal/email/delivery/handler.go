@@ -8,6 +8,7 @@ import (
 	"time"
 
 	authdomain "ga03-backend/internal/auth/domain"
+	emaildomain "ga03-backend/internal/email/domain"
 	emaildto "ga03-backend/internal/email/dto"
 	"ga03-backend/internal/email/usecase"
 
@@ -16,6 +17,149 @@ import (
 
 type EmailHandler struct {
 	emailUsecase usecase.EmailUsecase
+}
+
+// GET /kanban/columns
+func (h *EmailHandler) GetKanbanColumns(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	columns, err := h.emailUsecase.GetKanbanColumns(userData.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"columns": columns})
+}
+
+// POST /kanban/columns
+func (h *EmailHandler) CreateKanbanColumn(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	var req emaildomain.KanbanColumn
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.ColumnID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "column_id is required"})
+		return
+	}
+
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	err := h.emailUsecase.CreateKanbanColumn(userData.ID, &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"column": req})
+}
+
+// PUT /kanban/columns/:column_id
+func (h *EmailHandler) UpdateKanbanColumn(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	columnID := c.Param("column_id")
+	var req emaildomain.KanbanColumn
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	req.ColumnID = columnID // Ensure column_id matches URL param
+	err := h.emailUsecase.UpdateKanbanColumn(userData.ID, &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"column": req})
+}
+
+// DELETE /kanban/columns/:column_id
+func (h *EmailHandler) DeleteKanbanColumn(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	columnID := c.Param("column_id")
+	err := h.emailUsecase.DeleteKanbanColumn(userData.ID, columnID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "column deleted"})
+}
+
+// PUT /kanban/columns/orders
+func (h *EmailHandler) UpdateKanbanColumnOrders(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	var req struct {
+		Orders map[string]int `json:"orders" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := h.emailUsecase.UpdateKanbanColumnOrders(userData.ID, req.Orders)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "column orders updated"})
 }
 
 // GET /emails/:id/summary

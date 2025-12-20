@@ -31,6 +31,12 @@ type EmailUsecase interface {
 	StoreEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
 	UpsertEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
 	SyncAllEmailsForUser(userID string) // Sync all emails for a user to vector DB (async, non-blocking)
+	// Kanban Column Management
+	GetKanbanColumns(userID string) ([]*emaildomain.KanbanColumn, error)
+	CreateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error
+	UpdateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error
+	DeleteKanbanColumn(userID, columnID string) error
+	UpdateKanbanColumnOrders(userID string, orders map[string]int) error
 	SetGeminiService(svc interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	})

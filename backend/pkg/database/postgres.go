@@ -30,15 +30,15 @@ func NewPostgresConnection(cfg *config.Config) (*gorm.DB, error) {
 	// Create database if it doesn't exist
 	if count == 0 {
 		log.Printf("Database %s does not exist. Creating...", cfg.DBName)
-		// Close the connection to postgres DB before creating the new one? 
+		// Close the connection to postgres DB before creating the new one?
 		// Actually GORM maintains a pool. But we can just run the CREATE DATABASE command.
 		// Note: CREATE DATABASE cannot run inside a transaction block.
 		// We need to get the underlying sql.DB to run this command or ensure GORM doesn't wrap it.
 		// GORM's Exec usually doesn't wrap in transaction unless specified.
-		
+
 		// However, to be safe and avoid "CREATE DATABASE cannot run inside a transaction block" error,
 		// we should ensure we are not in a transaction.
-		
+
 		createCmd := fmt.Sprintf("CREATE DATABASE %s", cfg.DBName)
 		if err := defaultDB.Exec(createCmd).Error; err != nil {
 			return nil, fmt.Errorf("failed to create database: %v", err)
@@ -56,9 +56,18 @@ func NewPostgresConnection(cfg *config.Config) (*gorm.DB, error) {
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort, cfg.DBSSLMode)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		PrepareStmt: false, // Disable prepared statements to avoid "cached plan must not change result type" error when schema changes during development
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %v", err)
+	}
+
+	// Deallocate all existing prepared statements to clear any cached plans from previous schema
+	// This helps avoid "cached plan must not change result type" errors when schema changes
+	sqlDB, err = db.DB()
+	if err == nil {
+		_, _ = sqlDB.Exec("DEALLOCATE ALL")
 	}
 
 	log.Println("Connected to PostgreSQL database successfully")

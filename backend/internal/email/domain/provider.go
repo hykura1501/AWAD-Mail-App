@@ -22,6 +22,7 @@ type MailProvider interface {
 	MarkAsRead(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error
 	MarkAsUnread(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error
 	ToggleStar(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error
+	ModifyMessageLabels(ctx context.Context, accessToken, refreshToken, messageID string, addLabelIDs, removeLabelIDs []string, onTokenRefresh TokenUpdateFunc) error
 	Watch(ctx context.Context, accessToken, refreshToken string, topicName string, onTokenRefresh TokenUpdateFunc) error
 	Stop(ctx context.Context, accessToken, refreshToken string, onTokenRefresh TokenUpdateFunc) error
 	ValidateToken(ctx context.Context, accessToken, refreshToken string, onTokenRefresh TokenUpdateFunc) error

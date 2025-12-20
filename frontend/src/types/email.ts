@@ -39,3 +39,15 @@ export interface EmailsResponse {
   offset: number;
   total: number;
 }
+
+export interface KanbanColumnConfig {
+  id: string;
+  user_id: string;
+  name: string;
+  column_id: string;
+  order: number;
+  gmail_label_id?: string;
+  remove_label_ids?: string[];
+  created_at: string;
+  updated_at: string;
+}

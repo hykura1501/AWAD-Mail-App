@@ -66,5 +66,16 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			search.POST("/semantic", emailHandler.SemanticSearch)
 			search.GET("/suggestions", emailHandler.GetSearchSuggestions)
 		}
+
+		// Kanban routes (protected)
+		kanban := api.Group("/kanban")
+		kanban.Use(delivery.AuthMiddleware(authUsecase))
+		{
+			kanban.GET("/columns", emailHandler.GetKanbanColumns)
+			kanban.POST("/columns", emailHandler.CreateKanbanColumn)
+			kanban.PUT("/columns/:column_id", emailHandler.UpdateKanbanColumn)
+			kanban.DELETE("/columns/:column_id", emailHandler.DeleteKanbanColumn)
+			kanban.PUT("/columns/orders", emailHandler.UpdateKanbanColumnOrders)
+		}
 	}
 }
