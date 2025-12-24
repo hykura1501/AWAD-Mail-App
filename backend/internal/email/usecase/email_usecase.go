@@ -1188,8 +1188,24 @@ func (u *emailUsecase) CreateKanbanColumn(userID string, column *emaildomain.Kan
 
 // UpdateKanbanColumn updates a Kanban column
 func (u *emailUsecase) UpdateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error {
-	column.UserID = userID
-	return u.kanbanColumnRepo.UpdateColumn(column)
+	// Fetch existing column to get the primary key ID
+	existing, err := u.kanbanColumnRepo.GetColumnByID(userID, column.ColumnID)
+	if err != nil {
+		return fmt.Errorf("failed to find column: %w", err)
+	}
+	if existing == nil {
+		return fmt.Errorf("column not found: %s", column.ColumnID)
+	}
+
+	// Preserve the primary key ID and merge updates
+	existing.Name = column.Name
+	existing.GmailLabelID = column.GmailLabelID
+	existing.RemoveLabelIDs = column.RemoveLabelIDs
+	if column.Order > 0 {
+		existing.Order = column.Order
+	}
+
+	return u.kanbanColumnRepo.UpdateColumn(existing)
 }
 
 // DeleteKanbanColumn deletes a Kanban column
