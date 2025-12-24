@@ -1230,7 +1230,63 @@ func (u *emailUsecase) syncMailboxEmails(userID, mailboxID string) {
 
 // GetKanbanColumns gets all Kanban columns for a user
 func (u *emailUsecase) GetKanbanColumns(userID string) ([]*emaildomain.KanbanColumn, error) {
-	return u.kanbanColumnRepo.GetColumnsByUserID(userID)
+	columns, err := u.kanbanColumnRepo.GetColumnsByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Default columns that should always exist
+	defaults := []*emaildomain.KanbanColumn{
+		{
+			ColumnID:       "inbox",
+			Name:           "Inbox",
+			Order:          0,
+			GmailLabelID:   "INBOX",
+			RemoveLabelIDs: []string{"INBOX"},
+			UserID:         userID,
+		},
+		{
+			ColumnID:       "todo",
+			Name:           "To Do",
+			Order:          1,
+			GmailLabelID:   "IMPORTANT",
+			RemoveLabelIDs: []string{"IMPORTANT"},
+			UserID:         userID,
+		},
+		{
+			ColumnID:       "done",
+			Name:           "Done",
+			Order:          2,
+			GmailLabelID:   "STARRED",
+			RemoveLabelIDs: []string{"STARRED"},
+			UserID:         userID,
+		},
+		{
+			ColumnID:       "snoozed",
+			Name:           "Snoozed",
+			Order:          3,
+			UserID:         userID,
+		},
+	}
+
+	// Check which default columns are missing and create them
+	existingColumnIDs := make(map[string]bool)
+	for _, col := range columns {
+		existingColumnIDs[col.ColumnID] = true
+	}
+
+	for _, defaultCol := range defaults {
+		if !existingColumnIDs[defaultCol.ColumnID] {
+			if err := u.CreateKanbanColumn(userID, defaultCol); err != nil {
+				log.Printf("Failed to create default column %s: %v", defaultCol.ColumnID, err)
+			} else {
+				// Append to result so we return the newly created columns immediately
+				columns = append(columns, defaultCol)
+			}
+		}
+	}
+
+	return columns, nil
 }
 
 // CreateKanbanColumn creates a new Kanban column
