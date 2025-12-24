@@ -338,13 +338,15 @@ export default function KanbanPage() {
 
   // Optimistic update khi kéo thả
   const handleKanbanDrop = (emailId: string, targetColumnId: string) => {
-    // Find the email being moved
+    // Find the email and its source column
     let movedEmail: Email | undefined;
-    for (const emails of Object.values(kanbanEmails)) {
+    let sourceColumnId: string | undefined;
+    for (const [colId, emails] of Object.entries(kanbanEmails)) {
       if (!emails) continue; // Skip null/undefined arrays
       const found = emails.find((e) => e.id === emailId);
       if (found) {
         movedEmail = found;
+        sourceColumnId = colId;
         break;
       }
     }
@@ -393,8 +395,8 @@ export default function KanbanPage() {
       
       return newEmails;
     });
-    // Call API update (không reload lại list, tin vào optimistic update)
-    emailService.moveEmailToMailbox(emailId, targetColumnId).catch((error) => {
+    // Call API update with source column ID (không reload lại list, tin vào optimistic update)
+    emailService.moveEmailToMailbox(emailId, targetColumnId, sourceColumnId).catch((error) => {
       console.error("Error moving email:", error);
       // Trường hợp lỗi, có thể cân nhắc rollback state hoặc chờ SSE đồng bộ
     });

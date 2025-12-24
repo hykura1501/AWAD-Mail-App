@@ -23,7 +23,7 @@ type EmailUsecase interface {
 	ArchiveEmail(userID, id string) error
 	WatchMailbox(userID string) error
 	SummarizeEmail(ctx context.Context, emailID string) (string, error)
-	MoveEmailToMailbox(userID, emailID, mailboxID string) error
+	MoveEmailToMailbox(userID, emailID, mailboxID, sourceColumnID string) error
 	SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error
 	FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
 	SemanticSearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)

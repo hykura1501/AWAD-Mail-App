@@ -186,7 +186,8 @@ func (h *EmailHandler) SummarizeEmail(c *gin.Context) {
 func (h *EmailHandler) MoveEmailToMailbox(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		MailboxID string `json:"mailbox_id"`
+		MailboxID      string `json:"mailbox_id"`
+		SourceColumnID string `json:"source_column_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.MailboxID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing mailbox_id"})
@@ -203,7 +204,7 @@ func (h *EmailHandler) MoveEmailToMailbox(c *gin.Context) {
 		return
 	}
 	userID := userData.ID
-	if err := h.emailUsecase.MoveEmailToMailbox(userID, id, req.MailboxID); err != nil {
+	if err := h.emailUsecase.MoveEmailToMailbox(userID, id, req.MailboxID, req.SourceColumnID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
