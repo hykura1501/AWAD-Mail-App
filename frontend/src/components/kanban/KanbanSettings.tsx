@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { X, Plus, GripVertical, Trash2, Edit2 } from "lucide-react";
 import { emailService } from "@/services/email.service";
 import type { KanbanColumnConfig } from "@/types/email";
@@ -63,14 +63,6 @@ export default function KanbanSettings({
     },
   });
 
-  // Update orders mutation
-  const updateOrdersMutation = useMutation({
-    mutationFn: (orders: Record<string, number>) =>
-      emailService.updateKanbanColumnOrders(orders),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
-    },
-  });
 
   const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
