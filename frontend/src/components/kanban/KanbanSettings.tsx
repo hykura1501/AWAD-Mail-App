@@ -284,6 +284,8 @@ export default function KanbanSettings({
 
     setShowMismatchWarning(false);
     setPendingUpdate(null);
+    setEditingColumn(null);
+    setEditRemoveLabels("");
   };
 
   const cancelMismatchUpdate = () => {
@@ -394,7 +396,7 @@ export default function KanbanSettings({
 
               {/* Edit Form */}
               {editingColumn && (
-                <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20 mb-4">
+                <div key={editingColumn.column_id} className="border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20 mb-4">
                   <h4 className="font-medium text-gray-900 dark:text-white mb-3">
                     Edit Column: {editingColumn.name}
                   </h4>
@@ -446,7 +448,7 @@ export default function KanbanSettings({
                       <input
                         type="text"
                         name="remove_label_ids"
-                        value={editRemoveLabels || editingColumn.remove_label_ids?.join(", ") || ""}
+                        value={editRemoveLabels}
                         onChange={(e) => setEditRemoveLabels(e.target.value)}
                         placeholder="INBOX, UNREAD"
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
