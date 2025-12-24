@@ -5,11 +5,11 @@ import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
 import { getAccessToken } from "@/lib/api-client";
-import type { Email, KanbanColumnConfig } from "@/types/email";
+import type { Email, KanbanColumnConfig, Mailbox } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import EmailDetail from "@/components/inbox/EmailDetail";
-import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/config/api";
 import KanbanBoard from "@/components/kanban/KanbanBoard";
 import type { KanbanColumn } from "@/components/kanban/KanbanBoard";
@@ -87,17 +87,13 @@ export default function KanbanPage() {
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Load Kanban columns configuration
-  const { data: kanbanColumnConfigs = [] } = useQuery<KanbanColumnConfig[]>({
-    queryKey: ["kanbanColumns"],
-    queryFn: () => emailService.getKanbanColumns(),
-  });
+  // Kanban columns configuration (loaded eagerly, no caching)
+  const [kanbanColumnConfigs, setKanbanColumnConfigs] = useState<
+    KanbanColumnConfig[]
+  >([]);
 
-  // Load mailboxes for label mapping in settings
-  const { data: mailboxes = [] } = useQuery({
-    queryKey: ["mailboxes"],
-    queryFn: () => emailService.getAllMailboxes(),
-  });
+  // Mailboxes for label mapping in settings (loaded eagerly, no caching)
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
 
   // State cho popup chi tiết email
   const [detailEmailId, setDetailEmailId] = useState<string | null>(null);
@@ -112,51 +108,24 @@ export default function KanbanPage() {
     subject: string;
   } | null>(null);
 
-  const { data: summary, isFetching: isSummaryLoading } = useQuery({
-    queryKey: ["email-summary", detailEmailId],
-    queryFn: async () => {
-      if (!detailEmailId) return "";
-      return emailService.getEmailSummary(detailEmailId);
-    },
-    enabled: !!detailEmailId,
-  });
+  // Summary state (no React Query caching)
+  const [summary, setSummary] = useState<string>("");
+  const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
 
-
-
-  // Wake up mutation
-  const wakeUpEmailMutation = useMutation({
-    mutationFn: async (emailId: string) => {
-      await emailService.moveEmailToMailbox(emailId, "inbox");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["emails"] });
-    },
-  });
-
-  // Mutation cho kéo thả Kanban
-  const moveEmailMutation = useMutation({
-    mutationFn: async ({
-      emailId,
-      mailboxId,
-    }: {
-      emailId: string;
-      mailboxId: string;
-    }) => {
-      await emailService.moveEmailToMailbox(emailId, mailboxId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["emails"] });
-    },
-  });
-
-  // State phân trang cho từng cột Kanban
-  const [kanbanOffsets, setKanbanOffsets] = useState({
+  // State phân trang cho từng cột Kanban (hỗ trợ cả custom columns)
+  const [kanbanOffsets, setKanbanOffsets] = useState<Record<string, number>>({
     inbox: 0,
     todo: 0,
     done: 0,
     snoozed: 0,
   });
   const limit = 20;
+
+  // Loading state for each Kanban column
+  const [isLoadingInbox, setIsLoadingInbox] = useState(false);
+  const [isLoadingTodo, setIsLoadingTodo] = useState(false);
+  const [isLoadingDone, setIsLoadingDone] = useState(false);
+  const [isLoadingSnoozed, setIsLoadingSnoozed] = useState(false);
 
   // State emails cho từng cột (optimistic update)
   // Use Record to allow dynamic column IDs (including custom columns)
@@ -192,50 +161,124 @@ export default function KanbanPage() {
     });
   };
 
-  // Query từng cột
-  const {
-    data: inboxData,
-    isLoading: isLoadingInbox,
-  } = useQuery({
-    queryKey: ["emails", "kanban", "inbox", kanbanOffsets.inbox],
-    queryFn: () =>
-      emailService.getEmailsByStatus("inbox", limit, kanbanOffsets.inbox),
-  });
-  const {
-    data: todoData,
-    isLoading: isLoadingTodo,
-  } = useQuery({
-    queryKey: ["emails", "kanban", "todo", kanbanOffsets.todo],
-    queryFn: () =>
-      emailService.getEmailsByStatus("todo", limit, kanbanOffsets.todo),
-  });
-  const {
-    data: doneData,
-    isLoading: isLoadingDone,
-  } = useQuery({
-    queryKey: ["emails", "kanban", "done", kanbanOffsets.done],
-    queryFn: () =>
-      emailService.getEmailsByStatus("done", limit, kanbanOffsets.done),
-  });
-  const {
-    data: snoozedData,
-    isLoading: isLoadingSnoozed,
-  } = useQuery({
-    queryKey: ["emails", "kanban", "snoozed", kanbanOffsets.snoozed],
-    queryFn: () =>
-      emailService.getEmailsByStatus("snoozed", limit, kanbanOffsets.snoozed),
-  });
+  // Eager loading helpers (no React Query caching)
+  const loadKanbanColumn = async (status: string, offset: number) => {
+    try {
+      if (status === "inbox") setIsLoadingInbox(true);
+      if (status === "todo") setIsLoadingTodo(true);
+      if (status === "done") setIsLoadingDone(true);
+      if (status === "snoozed") setIsLoadingSnoozed(true);
 
-  // Update kanbanEmails state when query data changes
+      const data = await emailService.getEmailsByStatus(status, limit, offset);
+      setKanbanEmails((prev) => ({
+        ...prev,
+        [status]: data.emails,
+      }));
+    } finally {
+      if (status === "inbox") setIsLoadingInbox(false);
+      if (status === "todo") setIsLoadingTodo(false);
+      if (status === "done") setIsLoadingDone(false);
+      if (status === "snoozed") setIsLoadingSnoozed(false);
+    }
+  };
+
+  const reloadAllKanbanColumns = async () => {
+    const defaultLoads = [
+      loadKanbanColumn("inbox", kanbanOffsets.inbox ?? 0),
+      loadKanbanColumn("todo", kanbanOffsets.todo ?? 0),
+      loadKanbanColumn("done", kanbanOffsets.done ?? 0),
+      loadKanbanColumn("snoozed", kanbanOffsets.snoozed ?? 0),
+    ];
+
+    // Load thêm các custom columns nếu có cấu hình (dùng column_id làm status)
+    const defaultIds = new Set(["inbox", "todo", "done", "snoozed"]);
+    const customLoads = kanbanColumnConfigs
+      .filter((c) => !defaultIds.has(c.column_id))
+      .map((c) =>
+        loadKanbanColumn(c.column_id, kanbanOffsets[c.column_id] ?? 0)
+      );
+
+    await Promise.all([...defaultLoads, ...customLoads]);
+  };
+
+  // Initial load: fetch columns + mailboxes, rồi fetch emails cho tất cả cột (default + custom)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setKanbanEmails({
-      inbox: inboxData?.emails ?? [],
-      todo: todoData?.emails ?? [],
-      done: doneData?.emails ?? [],
-      snoozed: snoozedData?.emails ?? [],
-    });
-  }, [inboxData, todoData, doneData, snoozedData]);
+    const initKanban = async () => {
+      try {
+        // 1. Fetch cấu hình cột + mailboxes
+        const [columns, mbs] = await Promise.all([
+          emailService.getKanbanColumns(),
+          emailService.getAllMailboxes(),
+        ]);
+        setKanbanColumnConfigs(columns);
+        setMailboxes(mbs);
+
+        // 2. Xác định danh sách cột cần fetch (default + custom)
+        const defaultIds = new Set(["inbox", "todo", "done", "snoozed"]);
+
+        const allLoads: Promise<void>[] = [];
+
+        // Default columns
+        allLoads.push(
+          loadKanbanColumn("inbox", kanbanOffsets.inbox ?? 0),
+          loadKanbanColumn("todo", kanbanOffsets.todo ?? 0),
+          loadKanbanColumn("done", kanbanOffsets.done ?? 0),
+          loadKanbanColumn("snoozed", kanbanOffsets.snoozed ?? 0)
+        );
+
+        // Custom columns từ backend
+        columns
+          .filter((c) => !defaultIds.has(c.column_id))
+          .forEach((c) => {
+            allLoads.push(
+              loadKanbanColumn(c.column_id, kanbanOffsets[c.column_id] ?? 0)
+            );
+          });
+
+        // 3. Fetch emails cho tất cả cột trên
+        await Promise.all(allLoads);
+      } catch (error) {
+        console.error("Error initializing Kanban:", error);
+      }
+    };
+
+    initKanban();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load summary whenever detailEmailId changes
+  useEffect(() => {
+    if (!detailEmailId) {
+      setSummary("");
+      return;
+    }
+
+    let cancelled = false;
+    const loadSummary = async () => {
+      try {
+        setIsSummaryLoading(true);
+        const s = await emailService.getEmailSummary(detailEmailId);
+        if (!cancelled) {
+          setSummary(s);
+        }
+      } catch (error) {
+        console.error("Error fetching summary:", error);
+        if (!cancelled) {
+          setSummary("Không thể tạo tóm tắt cho email này.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSummaryLoading(false);
+        }
+      }
+    };
+
+    loadSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailEmailId]);
 
   // Track which emails have requested summaries
   const [requestedSummaries, setRequestedSummaries] = useState<Set<string>>(
@@ -275,12 +318,21 @@ export default function KanbanPage() {
     }
   };
 
-  // Hàm chuyển trang cho từng cột
-  const handleKanbanPage = (col: keyof typeof kanbanOffsets, dir: 1 | -1) => {
-    setKanbanOffsets((prev) => ({
-      ...prev,
-      [col]: Math.max(0, prev[col] + dir * limit),
-    }));
+  // Hàm chuyển trang cho từng cột (hỗ trợ cả custom columns)
+  const handleKanbanPage = (col: string, dir: 1 | -1) => {
+    setKanbanOffsets((prev) => {
+      const currentOffset = prev[col] ?? 0;
+      const newOffset = Math.max(0, currentOffset + dir * limit);
+      const next = {
+        ...prev,
+        [col]: newOffset,
+      };
+      // Eager load dữ liệu mới cho cột đó
+      loadKanbanColumn(col, newOffset).catch((error) => {
+        console.error("Error loading Kanban column:", error);
+      });
+      return next;
+    });
   };
 
   // Optimistic update khi kéo thả
@@ -328,13 +380,18 @@ export default function KanbanPage() {
         if (!newEmails[targetColumnId]) {
           newEmails[targetColumnId] = [];
         }
+        // cập nhật mailbox_id local cho đồng bộ UI
+        movedEmail.mailbox_id = targetColumnId;
         newEmails[targetColumnId] = [movedEmail, ...newEmails[targetColumnId]];
       }
       
       return newEmails;
     });
-    // Call API ngầm
-    moveEmailMutation.mutate({ emailId, mailboxId: targetColumnId });
+    // Call API update (không reload lại list, tin vào optimistic update)
+    emailService.moveEmailToMailbox(emailId, targetColumnId).catch((error) => {
+      console.error("Error moving email:", error);
+      // Trường hợp lỗi, có thể cân nhắc rollback state hoặc chờ SSE đồng bộ
+    });
   };
 
   // Handle snooze confirmation
@@ -369,8 +426,8 @@ export default function KanbanPage() {
     });
 
     // Call API
-    emailService.snoozeEmail(emailToSnooze.id, snoozeUntil).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["emails"] });
+    emailService.snoozeEmail(emailToSnooze.id, snoozeUntil).catch((error) => {
+      console.error("Error snoozing email:", error);
     });
 
     // Reset state
@@ -475,7 +532,18 @@ export default function KanbanPage() {
               return;
             }
 
-            // Only invalidate for new emails or external changes
+            // Không dùng useQuery ở trang này, nên eager reload trực tiếp
+            reloadAllKanbanColumns().catch((error) => {
+              console.error("Error reloading Kanban via SSE:", error);
+            });
+            emailService
+              .getAllMailboxes()
+              .then((mbs) => setMailboxes(mbs))
+              .catch((error) => {
+                console.error("Error reloading mailboxes via SSE:", error);
+              });
+
+            // Vẫn invalidate cho các trang khác nếu có dùng React Query
             queryClient.invalidateQueries({
               queryKey: ["emails"],
               refetchType: "none",
@@ -510,6 +578,7 @@ export default function KanbanPage() {
         unsubscribe();
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, queryClient]);
 
   return (
@@ -567,9 +636,7 @@ export default function KanbanPage() {
             <KanbanBoard
               columns={kanbanColumns}
               onEmailDrop={handleKanbanDrop}
-              onPageChange={(colId, dir) =>
-                handleKanbanPage(colId as keyof typeof kanbanOffsets, dir)
-              }
+              onPageChange={(colId, dir) => handleKanbanPage(colId, dir)}
               emailSummaries={summaryStates}
               onRequestSummary={handleRequestSummary}
               isLoading={isAnyLoading}
@@ -619,7 +686,12 @@ export default function KanbanPage() {
                         }
                         return newEmails;
                       });
-                      wakeUpEmailMutation.mutate(email.id);
+                      // Chỉ call API update, không reload lại toàn bộ Kanban
+                      emailService
+                        .moveEmailToMailbox(email.id, "inbox")
+                        .catch((error) => {
+                          console.error("Error unsnoozing email:", error);
+                        });
                     }}
                   >
                     Unsnooze
@@ -774,11 +846,20 @@ export default function KanbanPage() {
                                       )
                                     ) as typeof prev;
                                     if (movedEmail) {
-                                      newEmails.inbox = [movedEmail, ...newEmails.inbox];
+                          movedEmail.mailbox_id = "inbox";
+                          newEmails.inbox = [movedEmail, ...newEmails.inbox];
                                     }
                                     return newEmails;
                                   });
-                                  wakeUpEmailMutation.mutate(email.id);
+                                  // Chỉ call API update, không reload lại toàn bộ Kanban
+                                  emailService
+                                    .moveEmailToMailbox(email.id, "inbox")
+                                    .catch((error) => {
+                                      console.error(
+                                        "Error unsnoozing email (mobile):",
+                                        error
+                                      );
+                                    });
                                 }}
                               >
                                 <span className="material-symbols-outlined text-xs mr-1">
@@ -815,7 +896,7 @@ export default function KanbanPage() {
                         <button
                           onClick={() =>
                             handleKanbanPage(
-                              mobileSelectedColumn as keyof typeof kanbanOffsets,
+                              mobileSelectedColumn,
                               -1
                             )
                           }
@@ -827,7 +908,7 @@ export default function KanbanPage() {
                         <button
                           onClick={() =>
                             handleKanbanPage(
-                              mobileSelectedColumn as keyof typeof kanbanOffsets,
+                              mobileSelectedColumn,
                               1
                             )
                           }

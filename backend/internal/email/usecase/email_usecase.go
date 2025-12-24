@@ -22,15 +22,16 @@ import (
 
 // emailUsecase implements EmailUsecase interface
 type emailUsecase struct {
-	emailRepo            repository.EmailRepository
-	emailSyncHistoryRepo repository.EmailSyncHistoryRepository
-	kanbanColumnRepo     repository.KanbanColumnRepository
-	userRepo             authrepo.UserRepository
-	mailProvider         emaildomain.MailProvider // Gmail Provider
-	imapProvider         *imap.IMAPService        // IMAP Provider
-	config               *config.Config
-	topicName            string
-	geminiService        interface {
+	emailRepo             repository.EmailRepository
+	emailSyncHistoryRepo  repository.EmailSyncHistoryRepository
+	kanbanColumnRepo      repository.KanbanColumnRepository
+	emailKanbanColumnRepo repository.EmailKanbanColumnRepository
+	userRepo              authrepo.UserRepository
+	mailProvider          emaildomain.MailProvider // Gmail Provider
+	imapProvider          *imap.IMAPService        // IMAP Provider
+	config                *config.Config
+	topicName             string
+	geminiService         interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	}
 	kanbanStatus        map[string]string // emailID -> status
@@ -60,20 +61,21 @@ func (u *emailUsecase) SetVectorSearchService(svc VectorSearchService) {
 }
 
 // NewEmailUsecase creates a new instance of emailUsecase
-func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo repository.EmailSyncHistoryRepository, kanbanColumnRepo repository.KanbanColumnRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
+func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo repository.EmailSyncHistoryRepository, kanbanColumnRepo repository.KanbanColumnRepository, emailKanbanColumnRepo repository.EmailKanbanColumnRepository, userRepo authrepo.UserRepository, mailProvider emaildomain.MailProvider, imapProvider *imap.IMAPService, cfg *config.Config, topicName string) EmailUsecase {
 	// GeminiService cần được truyền vào khi khởi tạo
 	uc := &emailUsecase{
-		emailRepo:            emailRepo,
-		emailSyncHistoryRepo: emailSyncHistoryRepo,
-		kanbanColumnRepo:     kanbanColumnRepo,
-		userRepo:             userRepo,
-		mailProvider:         mailProvider,
-		imapProvider:         imapProvider,
-		config:               cfg,
-		topicName:            topicName,
-		geminiService:        nil, // cần set sau
-		kanbanStatus:         make(map[string]string),
-		syncJobQueue:         make(chan EmailSyncJob, 1000), // Buffered channel for jobs
+		emailRepo:             emailRepo,
+		emailSyncHistoryRepo:  emailSyncHistoryRepo,
+		kanbanColumnRepo:      kanbanColumnRepo,
+		emailKanbanColumnRepo: emailKanbanColumnRepo,
+		userRepo:              userRepo,
+		mailProvider:          mailProvider,
+		imapProvider:          imapProvider,
+		config:                cfg,
+		topicName:             topicName,
+		geminiService:         nil, // cần set sau
+		kanbanStatus:          make(map[string]string),
+		syncJobQueue:          make(chan EmailSyncJob, 1000), // Buffered channel for jobs
 	}
 	uc.startSnoozeChecker()
 	uc.startSyncWorkers(5) // Start 5 worker goroutines
@@ -667,6 +669,14 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID string) err
 
 	// Update local Kanban status map
 	u.kanbanStatus[emailID] = mailboxID
+
+	// Save email-column mapping to DB (for both default and custom columns)
+	// This allows us to persist which emails belong to which columns
+	if err := u.emailKanbanColumnRepo.SetEmailColumn(userID, emailID, mailboxID); err != nil {
+		// Log error but don't fail the operation
+		log.Printf("Failed to save email-column mapping: %v", err)
+	}
+
 	return nil
 }
 
@@ -730,8 +740,10 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 	}
 
 	ctx := context.Background()
-	// Chỉ lấy đúng số lượng email từ Gmail theo limit và offset truyền vào
-	emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit, offset, "", u.makeTokenUpdateCallback(userID))
+	// Fetch emails from INBOX (we'll filter them based on column mapping)
+	// Note: For custom columns, we fetch from INBOX and filter by DB mapping
+	// This means archived emails won't appear in custom columns
+	emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit*2, offset, "", u.makeTokenUpdateCallback(userID))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -741,22 +753,77 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		u.syncEmailToVectorDB(userID, email)
 	}
 
+	// Check if this is a default column or custom column
+	defaultColumns := map[string]bool{
+		"inbox":   true,
+		"todo":    true,
+		"done":    true,
+		"snoozed": true,
+	}
+
 	var filtered []*emaildomain.Email
-	if status == "inbox" {
-		for _, email := range emails {
-			s, ok := u.kanbanStatus[email.ID]
-			if !ok || s == "inbox" {
-				filtered = append(filtered, email)
+	if defaultColumns[status] {
+		// Default columns: use kanbanStatus map (in-memory) as fallback, but also check DB
+		emailIDSet := make(map[string]bool)
+
+		// Get email IDs from DB mapping first
+		dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
+		if err == nil {
+			for _, id := range dbEmailIDs {
+				emailIDSet[id] = true
+			}
+		}
+
+		// Filter emails
+		if status == "inbox" {
+			// For inbox: include emails that are in inbox (no mapping) or explicitly mapped to inbox
+			for _, email := range emails {
+				// Check DB mapping first
+				if emailIDSet[email.ID] {
+					filtered = append(filtered, email)
+					continue
+				}
+				// Fallback to in-memory status
+				s, ok := u.kanbanStatus[email.ID]
+				if !ok || s == "inbox" {
+					filtered = append(filtered, email)
+				}
+			}
+		} else {
+			// For other default columns: only include if mapped
+			for _, email := range emails {
+				// Check DB mapping first
+				if emailIDSet[email.ID] {
+					filtered = append(filtered, email)
+					continue
+				}
+				// Fallback to in-memory status
+				if s, ok := u.kanbanStatus[email.ID]; ok && s == status {
+					filtered = append(filtered, email)
+				}
 			}
 		}
 	} else {
+		// Custom column: check DB mapping only
+		dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
+		if err != nil {
+			// If error, return empty list
+			return []*emaildomain.Email{}, 0, nil
+		}
+
+		emailIDSet := make(map[string]bool)
+		for _, id := range dbEmailIDs {
+			emailIDSet[id] = true
+		}
+
+		// Filter emails that are in the custom column
 		for _, email := range emails {
-			if s, ok := u.kanbanStatus[email.ID]; ok && s == status {
+			if emailIDSet[email.ID] {
 				filtered = append(filtered, email)
 			}
 		}
 	}
-	return filtered, total, nil
+	return filtered, len(filtered), nil
 }
 
 // FuzzySearch performs fuzzy search over emails
