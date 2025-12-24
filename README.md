@@ -1,9 +1,9 @@
 # React Authentication + Email Dashboard G06 Week03
 
 **Public URLs:**
-- **Frontend (Vercel):** https://inbox-flow-eta.vercel.app/
-- **Backend (Render):** https://awad-mail-app.onrender.com
-- **Monorepo:** https://github.com/PhanPhuc269/AWAD-Mail-App
+- **Frontend (Vercel):** https://g07-week4.vercel.app/
+- **Backend (Render):** https://g07-week4.onrender.com
+- **Monorepo:** https://github.com/hykura1501/G07-Week4
 
 ---
 
@@ -449,3 +449,31 @@ This project is created for educational purposes.
 ## Author
 
 Created as part of the AWDA GA03 assignment.
+
+## New Features (Week 4 Addendum)
+
+- **I. Semantic Search (Backend)**
+  - Embeddings are generated for emails to enable semantic matching.
+  - Search logic uses vector comparison rather than simple SQL LIKE.
+  - Results demonstrate conceptual relevance (e.g., querying "cost" surfaces "invoice" emails).
+
+- **II. Auto-Suggestion (Frontend)**
+  - The search bar shows a live dropdown while typing.
+  - Suggestions stay relevant (contacts, keywords) and update as the query changes.
+  - Selecting a suggestion triggers and executes the search flow correctly.
+
+- **III. Kanban Configuration**
+  - Users can add, remove, or rename columns directly in the UI.
+  - Configuration persists across refreshes.
+  - Label mapping is enforced: moving cards updates the correct Gmail label (e.g., moving to "Archive" removes the Inbox label).
+
+- **Deployment, UI/UX, and Demo**
+  - Deployed frontend (Vercel/Netlify) and backend (cloud-hosted) environments are live.
+  - UI/UX is polished with proper loading states and error handling.
+  - Demo video (<5 mins) shows Search, Kanban configuration, and sync behavior.
+
+- **Code Quality**
+  - Clean component/service structure, robust error handling, and no hardcoded secrets.
+
+- **Total**
+  - End-to-end coverage of search, suggestions, kanban configuration, and deployment/demo requirements.
