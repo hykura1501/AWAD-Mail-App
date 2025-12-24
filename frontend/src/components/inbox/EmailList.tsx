@@ -14,6 +14,8 @@ interface EmailListProps {
   selectedEmailId: string | null;
   onSelectEmail: (email: Email) => void;
   onToggleStar: (emailId: string) => void;
+  searchQuery?: string; // External search query from header
+  onClearSearch?: () => void; // Callback to clear search
 }
 
 const ITEMS_PER_PAGE = 20;
@@ -22,45 +24,71 @@ export default function EmailList({
   mailboxId,
   selectedEmailId,
   onSelectEmail,
+  searchQuery,
+  onClearSearch,
 }: EmailListProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const [debouncedInternalSearch, setDebouncedInternalSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [cachedData, setCachedData] = useState<EmailsResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
-  const cacheKey = `emails-${mailboxId}-${offset}-${debouncedSearchQuery}`;
+  
+  // When external searchQuery is provided, use that; otherwise use internal search
+  const isExternalSearch = !!searchQuery;
+  const cacheKey = isExternalSearch 
+    ? `search-${searchQuery}-${offset}` 
+    : `emails-${mailboxId}-${offset}-${debouncedInternalSearch}`;
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery);
+      setDebouncedInternalSearch(internalSearchQuery);
       setCurrentPage(1); // Reset to page 1 on search
     }, 500);
     return () => clearTimeout(timer);
+  }, [internalSearchQuery]);
+
+  // Reset page when external search query changes
+  useEffect(() => {
+    if (searchQuery) {
+      setCurrentPage(1);
+    }
   }, [searchQuery]);
 
   useEffect(() => {
-    if (mailboxId) {
+    if (mailboxId || isExternalSearch) {
       getFromCache(cacheKey).then((data) => {
         if (data) setCachedData(data);
       });
     }
-  }, [cacheKey, mailboxId]);
+  }, [cacheKey, mailboxId, isExternalSearch]);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ["emails", mailboxId, offset, debouncedSearchQuery],
+    queryKey: isExternalSearch 
+      ? ["search", searchQuery, offset] 
+      : ["emails", mailboxId, offset, debouncedInternalSearch],
     queryFn: async () => {
-      const result = await emailService.getEmailsByMailbox(
-        mailboxId!,
-        ITEMS_PER_PAGE,
-        offset,
-        debouncedSearchQuery
-      );
+      let result: EmailsResponse;
+      if (isExternalSearch) {
+        // Use semantic search for external search query
+        result = await emailService.semanticSearch(
+          searchQuery!,
+          ITEMS_PER_PAGE,
+          offset
+        );
+      } else {
+        result = await emailService.getEmailsByMailbox(
+          mailboxId!,
+          ITEMS_PER_PAGE,
+          offset,
+          debouncedInternalSearch
+        );
+      }
       saveToCache(cacheKey, result);
       return result;
     },
-    enabled: !!mailboxId,
+    enabled: !!mailboxId || isExternalSearch,
     placeholderData: cachedData ?? undefined,
   });
 
@@ -79,7 +107,7 @@ export default function EmailList({
       // Use setTimeout to avoid setState during render
       setTimeout(() => {
         setCurrentPage(1);
-        setSearchQuery("");
+        setInternalSearchQuery("");
         setSelectedIds(new Set());
         setCachedData(null);
       }, 0);
@@ -173,7 +201,7 @@ export default function EmailList({
     }
   };
 
-  if (!mailboxId) {
+  if (!mailboxId && !isExternalSearch) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400 bg-white dark:bg-[#111418]">
         <div className="text-center">
@@ -205,6 +233,28 @@ export default function EmailList({
 
   return (
     <div className="flex flex-col w-full h-full bg-white dark:bg-[#111418] border-r border-gray-200 dark:border-gray-700">
+      {/* Search Results Header - shown when searching from header */}
+      {isExternalSearch && (
+        <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-[20px]">
+              search
+            </span>
+            <span className="text-sm font-medium text-blue-700 dark:text-blue-300 truncate">
+              Kết quả cho: "{searchQuery}"
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30"
+            onClick={onClearSearch}
+          >
+            <span className="material-symbols-outlined text-[16px] mr-1">close</span>
+            Xóa
+          </Button>
+        </div>
+      )}
       <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1">
           <input

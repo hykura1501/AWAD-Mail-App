@@ -51,3 +51,78 @@ export const getFromCache = async (key: string): Promise<any | null> => {
     return null;
   }
 };
+
+// Get all cached email data from IndexedDB
+export const getAllCachedEmails = async (): Promise<any[]> => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        const results = request.result || [];
+        // Extract emails from cache entries (format: { key, data: { emails, total }, timestamp })
+        const allEmails: any[] = [];
+        for (const entry of results) {
+          if (entry.data?.emails && Array.isArray(entry.data.emails)) {
+            allEmails.push(...entry.data.emails);
+          }
+        }
+        resolve(allEmails);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error("Error getting all cached emails:", error);
+    return [];
+  }
+};
+
+// Get local suggestions from IndexedDB cached emails
+// Returns unique sender names and subjects that match the query
+export const getLocalSuggestions = async (query: string, limit: number = 5): Promise<string[]> => {
+  if (!query || query.trim().length < 2) {
+    return [];
+  }
+
+  const queryLower = query.toLowerCase().trim();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+  
+  try {
+    const emails = await getAllCachedEmails();
+    const suggestions: string[] = [];
+    const seen = new Set<string>();
+
+    // Helper to check if text contains any query word
+    const matchesQuery = (text: string): boolean => {
+      const textLower = text.toLowerCase();
+      return queryWords.some(word => textLower.includes(word));
+    };
+
+    for (const email of emails) {
+      if (suggestions.length >= limit) break;
+
+      // Add sender name if matches
+      const fromName = email.from_name || email.fromName;
+      if (fromName && !seen.has(fromName) && matchesQuery(fromName)) {
+        suggestions.push(fromName);
+        seen.add(fromName);
+        if (suggestions.length >= limit) break;
+      }
+
+      // Add subject if matches
+      const subject = email.subject;
+      if (subject && !seen.has(subject) && matchesQuery(subject)) {
+        suggestions.push(subject);
+        seen.add(subject);
+      }
+    }
+
+    return suggestions;
+  } catch (error) {
+    console.error("Error getting local suggestions:", error);
+    return [];
+  }
+};

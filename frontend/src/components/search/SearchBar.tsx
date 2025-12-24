@@ -3,6 +3,7 @@ import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emailService } from "@/services/email.service";
 import { useDebounce } from "@/hooks/useDebounce";
+import { getLocalSuggestions } from "@/lib/db";
 
 interface SearchBarProps {
   onSearch: (query: string) => void;
@@ -43,10 +44,10 @@ export default function SearchBar({
   // Use controlled value if provided, otherwise use internal state
   const query = controlledValue !== undefined ? controlledValue : internalQuery;
 
-  // Debounce query for API calls
-  const debouncedQuery = useDebounce(query, 1000);
+  // Debounce query for API calls (reduced from 1000ms to 300ms for faster response)
+  const debouncedQuery = useDebounce(query, 300);
 
-  // Fetch suggestions when debounced query changes (only if suggestions are enabled)
+  // Hybrid suggestions: fetch from IndexedDB (instant) + backend API (async)
   useEffect(() => {
     // Don't fetch suggestions if disabled (e.g., already on search page)
     if (disableSuggestions) {
@@ -66,21 +67,61 @@ export default function SearchBar({
       return;
     }
 
-    const fetchSuggestions = async () => {
+    const trimmedQuery = debouncedQuery.trim();
+    let isCancelled = false;
+
+    const fetchHybridSuggestions = async () => {
       try {
-        const trimmedQuery = debouncedQuery.trim();
-        const results = await emailService.getSearchSuggestions(trimmedQuery);
-        setSuggestions(results);
-        setShowSuggestions(results.length > 0);
-        setSelectedIndex(-1);
+        // 1. Get local suggestions from IndexedDB (instant)
+        const localSuggestions = await getLocalSuggestions(trimmedQuery, 5);
+        
+        if (!isCancelled && localSuggestions.length > 0) {
+          // Show local suggestions immediately
+          setSuggestions(localSuggestions);
+          setShowSuggestions(true);
+          setSelectedIndex(-1);
+        }
+
+        // 2. Also fetch from backend API (async, may take longer)
+        try {
+          const apiSuggestions = await emailService.getSearchSuggestions(trimmedQuery);
+          
+          if (!isCancelled) {
+            // Merge and dedupe: local first, then API
+            const merged = [...localSuggestions];
+            const seen = new Set(localSuggestions.map(s => s.toLowerCase()));
+            
+            for (const suggestion of apiSuggestions) {
+              if (!seen.has(suggestion.toLowerCase())) {
+                merged.push(suggestion);
+                seen.add(suggestion.toLowerCase());
+              }
+            }
+            
+            // Limit to 7 suggestions total
+            const finalSuggestions = merged.slice(0, 7);
+            setSuggestions(finalSuggestions);
+            setShowSuggestions(finalSuggestions.length > 0);
+            setSelectedIndex(-1);
+          }
+        } catch (apiError) {
+          // API failed, but we still have local suggestions
+          console.warn("Backend suggestions failed, using local only:", apiError);
+        }
       } catch (error) {
         console.error("Failed to fetch suggestions:", error);
-        setSuggestions([]);
-        setShowSuggestions(false);
+        if (!isCancelled) {
+          setSuggestions([]);
+          setShowSuggestions(false);
+        }
       }
     };
 
-    fetchSuggestions();
+    fetchHybridSuggestions();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [debouncedQuery, suggestionSelected, disableSuggestions]);
 
   // Close suggestions when clicking outside
