@@ -54,46 +54,78 @@ func (u *emailUsecase) SemanticSearch(userID, query string, limit, offset int) (
 		return []*emaildomain.Email{}, 0, nil
 	}
 
-	// Fetch email details for the found IDs
-	var emails []*emaildomain.Email
-	for i, emailID := range emailIDs {
-		// Apply offset
-		if i < offset {
-			continue
-		}
+	// Apply offset and limit to email IDs
+	endIdx := offset + limit
+	if endIdx > len(emailIDs) {
+		endIdx = len(emailIDs)
+	}
+	if offset >= len(emailIDs) {
+		return []*emaildomain.Email{}, len(emailIDs), nil
+	}
+	targetIDs := emailIDs[offset:endIdx]
 
-		// Stop if we have enough results
-		if len(emails) >= limit {
-			break
-		}
+	// Fetch email details in parallel for better performance
+	type emailResult struct {
+		index int
+		email *emaildomain.Email
+	}
 
-		var email *emaildomain.Email
-		var getEmailErr error
-		if user.Provider == "imap" {
-			decryptedPass, decryptErr := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
-			if decryptErr != nil {
-				continue // Skip this email if password decryption fails
-			}
-			var getEmailErr error
-			email, getEmailErr = u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, emailID)
-			if getEmailErr != nil {
-				continue // Skip this email if fetch fails
-			}
-		} else {
-			accessToken, refreshToken, _ := u.getUserTokens(userID)
-			if accessToken != "" && u.mailProvider != nil {
-				email, getEmailErr = u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+	resultChan := make(chan emailResult, len(targetIDs))
+	semaphore := make(chan struct{}, 10) // Max 10 concurrent requests
+
+	// Pre-fetch tokens/password once (not in goroutines)
+	var accessToken, refreshToken, decryptedPass string
+	if user.Provider == "imap" {
+		var decryptErr error
+		decryptedPass, decryptErr = crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+		if decryptErr != nil {
+			return nil, 0, fmt.Errorf("failed to decrypt password: %w", decryptErr)
+		}
+	} else {
+		accessToken, refreshToken, _ = u.getUserTokens(userID)
+	}
+
+	// Fetch emails in parallel
+	for i, emailID := range targetIDs {
+		go func(idx int, id string) {
+			semaphore <- struct{}{}        // Acquire
+			defer func() { <-semaphore }() // Release
+
+			var email *emaildomain.Email
+			var err error
+
+			if user.Provider == "imap" {
+				email, err = u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
+			} else if accessToken != "" && u.mailProvider != nil {
+				email, err = u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 			} else {
-				email, getEmailErr = u.emailRepo.GetEmailByID(emailID)
+				email, err = u.emailRepo.GetEmailByID(id)
 			}
-		}
 
-		if getEmailErr == nil && email != nil {
-			emails = append(emails, email)
+			if err == nil && email != nil {
+				resultChan <- emailResult{index: idx, email: email}
+			} else {
+				resultChan <- emailResult{index: idx, email: nil}
+			}
+		}(i, emailID)
+	}
+
+	// Collect results
+	emails := make([]*emaildomain.Email, len(targetIDs))
+	for i := 0; i < len(targetIDs); i++ {
+		result := <-resultChan
+		emails[result.index] = result.email
+	}
+
+	// Filter out nil results and maintain order
+	var finalEmails []*emaildomain.Email
+	for _, email := range emails {
+		if email != nil {
+			finalEmails = append(finalEmails, email)
 		}
 	}
 
-	return emails, len(emailIDs), nil
+	return finalEmails, len(emailIDs), nil
 }
 
 // StoreEmailEmbedding stores embedding for an email

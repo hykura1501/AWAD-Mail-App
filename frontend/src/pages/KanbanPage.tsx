@@ -154,6 +154,7 @@ export default function KanbanPage() {
 
   // Helper function to filter emails
   const filterEmails = (emails: Email[], filterState: FilterState): Email[] => {
+    if (!emails) return [];
     return emails.filter((email) => {
       if (filterState.unreadOnly && email.is_read) return false;
       if (filterState.withAttachments && (!email.attachments || email.attachments.length === 0)) return false;
@@ -340,6 +341,7 @@ export default function KanbanPage() {
     // Find the email being moved
     let movedEmail: Email | undefined;
     for (const emails of Object.values(kanbanEmails)) {
+      if (!emails) continue; // Skip null/undefined arrays
       const found = emails.find((e) => e.id === emailId);
       if (found) {
         movedEmail = found;
@@ -365,6 +367,10 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
+        if (!emails) {
+          newEmails[col] = [];
+          return;
+        }
         const filtered = emails.filter((e) => {
           if (e.id === emailId) {
             movedEmail = e;
@@ -405,6 +411,10 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
+        if (!emails) {
+          newEmails[col] = [];
+          return;
+        }
         const filtered = emails.filter((e) => {
           if (e.id === emailToSnooze.id) {
             movedEmail = e;
@@ -1024,7 +1034,18 @@ export default function KanbanPage() {
       {/* Kanban Settings Modal */}
       <KanbanSettings
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={async () => {
+          setIsSettingsOpen(false);
+          // Reload columns after settings are closed to sync local state with any changes
+          try {
+            const columns = await emailService.getKanbanColumns();
+            setKanbanColumnConfigs(columns);
+            // Also reload emails for all columns
+            await reloadAllKanbanColumns();
+          } catch (error) {
+            console.error("Error reloading columns after settings:", error);
+          }
+        }}
         availableLabels={mailboxes.map((mb) => ({ id: mb.id, name: mb.name }))}
       />
     </div>
