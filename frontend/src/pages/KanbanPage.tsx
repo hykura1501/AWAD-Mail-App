@@ -441,8 +441,10 @@ export default function KanbanPage() {
 
   // Apply sorting and filtering to columns using useMemo for performance
   const kanbanColumns: KanbanColumn[] = useMemo(() => {
-    const processEmails = (emails: Email[]) => {
-      let result = filterEmails(emails, filters);
+    const processEmails = (emails: Email[] | null | undefined) => {
+      // Ensure emails is always an array
+      const emailsArray = emails || [];
+      let result = filterEmails(emailsArray, filters);
       result = sortEmails(result, sortBy);
       return result;
     };
