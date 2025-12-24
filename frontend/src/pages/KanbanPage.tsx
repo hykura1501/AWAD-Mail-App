@@ -340,7 +340,9 @@ export default function KanbanPage() {
     // Find the email being moved
     let movedEmail: Email | undefined;
     for (const emails of Object.values(kanbanEmails)) {
-      const found = emails.find((e) => e.id === emailId);
+      // Ensure emails is always an array
+      const emailsArray = emails || [];
+      const found = emailsArray.find((e) => e.id === emailId);
       if (found) {
         movedEmail = found;
         break;
@@ -365,7 +367,9 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
-        const filtered = emails.filter((e) => {
+        // Ensure emails is always an array
+        const emailsArray = emails || [];
+        const filtered = emailsArray.filter((e) => {
           if (e.id === emailId) {
             movedEmail = e;
             return false;
@@ -405,7 +409,9 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
-        const filtered = emails.filter((e) => {
+        // Ensure emails is always an array
+        const emailsArray = emails || [];
+        const filtered = emailsArray.filter((e) => {
           if (e.id === emailToSnooze.id) {
             movedEmail = e;
             return false;
@@ -672,7 +678,9 @@ export default function KanbanPage() {
                         let movedEmail: Email | undefined;
                         const newEmails = Object.fromEntries(
                           Object.entries(prev).map(([col, emails]) => {
-                            const filtered = emails.filter((ee) => {
+                            // Ensure emails is always an array
+                            const emailsArray = emails || [];
+                            const filtered = emailsArray.filter((ee) => {
                               if (ee.id === email.id) {
                                 movedEmail = ee;
                                 return false;
@@ -834,7 +842,9 @@ export default function KanbanPage() {
                                     const newEmails = Object.fromEntries(
                                       Object.entries(prev).map(
                                         ([col, emails]) => {
-                                          const filtered = emails.filter(
+                                          // Ensure emails is always an array
+                                          const emailsArray = emails || [];
+                                          const filtered = emailsArray.filter(
                                             (e) => {
                                               if (e.id === email.id) {
                                                 movedEmail = e;
