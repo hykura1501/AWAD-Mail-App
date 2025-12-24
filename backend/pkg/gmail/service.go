@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime/multipart"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -265,6 +266,12 @@ func (s *Service) GetEmails(ctx context.Context, accessToken, refreshToken strin
 		}
 		// Skip emails we can't fetch (already logged in Get)
 	}
+
+	// Sort emails by ReceivedAt descending (newest first)
+	// This is necessary because parallel fetching returns emails in random order
+	sort.Slice(emails, func(i, j int) bool {
+		return emails[i].ReceivedAt.After(emails[j].ReceivedAt)
+	})
 
 	// Return total estimate from Gmail API
 	totalEstimate := int(messagesResp.ResultSizeEstimate)

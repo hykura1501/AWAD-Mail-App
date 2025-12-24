@@ -105,7 +105,6 @@ export default function SearchPage() {
             isSearching={isLoading}
             placeholder="Tìm kiếm email (semantic search)..."
             className="w-full"
-            disableSuggestions={true}
           />
         </div>
       </div>

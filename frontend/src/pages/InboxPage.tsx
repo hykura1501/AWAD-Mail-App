@@ -36,6 +36,8 @@ export default function InboxPage() {
   const [mobileView, setMobileView] = useState<"mailbox" | "list" | "detail">(
     "list"
   );
+  // Search query from header - when set, shows search results in email list
+  const [headerSearchQuery, setHeaderSearchQuery] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
       const savedTheme = localStorage.getItem("theme");
@@ -75,12 +77,12 @@ export default function InboxPage() {
   const handleSearch = (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return;
-    // Navigate to dedicated search page with query param
-    navigate(`/search?q=${encodeURIComponent(trimmed)}`);
+    // Set search query to show results in email list column
+    setHeaderSearchQuery(trimmed);
   };
 
   const handleClearSearch = () => {
-    // No-op for now – clearing happens inside SearchPage
+    setHeaderSearchQuery("");
   };
 
   useEffect(() => {
@@ -164,6 +166,8 @@ export default function InboxPage() {
   };
 
   const handleSelectMailbox = (id: string) => {
+    // Clear search when selecting a mailbox
+    setHeaderSearchQuery("");
     navigate(`/${id}`);
   };
 
@@ -342,7 +346,7 @@ export default function InboxPage() {
           {/* Column 1: Sidebar */}
           <div className="w-[220px] shrink-0 border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#111418]">
             <MailboxList
-              selectedMailboxId={selectedMailboxId}
+              selectedMailboxId={headerSearchQuery ? null : selectedMailboxId}
               onSelectMailbox={handleSelectMailbox}
               onComposeClick={() => setIsComposeOpen(true)}
               onLogout={handleLogout}
@@ -353,10 +357,12 @@ export default function InboxPage() {
           {/* Column 2: Email List */}
           <div className="w-[360px] shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111418] flex flex-col">
             <EmailList
-              mailboxId={selectedMailboxId}
+              mailboxId={headerSearchQuery ? null : selectedMailboxId}
               selectedEmailId={selectedEmailId}
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
+              searchQuery={headerSearchQuery}
+              onClearSearch={handleClearSearch}
             />
           </div>
           {/* Column 3: Email Detail */}
@@ -394,7 +400,7 @@ export default function InboxPage() {
               </button>
             </div>
             <MailboxList
-              selectedMailboxId={selectedMailboxId}
+              selectedMailboxId={headerSearchQuery ? null : selectedMailboxId}
               onSelectMailbox={(id) => {
                 handleSelectMailbox(id);
                 setMobileView("list");
@@ -416,10 +422,12 @@ export default function InboxPage() {
             }`}
           >
             <EmailList
-              mailboxId={selectedMailboxId}
+              mailboxId={headerSearchQuery ? null : selectedMailboxId}
               selectedEmailId={selectedEmailId}
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
+              searchQuery={headerSearchQuery}
+              onClearSearch={handleClearSearch}
             />
           </div>
 

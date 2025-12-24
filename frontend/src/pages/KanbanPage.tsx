@@ -154,6 +154,7 @@ export default function KanbanPage() {
 
   // Helper function to filter emails
   const filterEmails = (emails: Email[], filterState: FilterState): Email[] => {
+    if (!emails) return [];
     return emails.filter((email) => {
       if (filterState.unreadOnly && email.is_read) return false;
       if (filterState.withAttachments && (!email.attachments || email.attachments.length === 0)) return false;
@@ -337,14 +338,15 @@ export default function KanbanPage() {
 
   // Optimistic update khi kéo thả
   const handleKanbanDrop = (emailId: string, targetColumnId: string) => {
-    // Find the email being moved
+    // Find the email and its source column
     let movedEmail: Email | undefined;
-    for (const emails of Object.values(kanbanEmails)) {
-      // Ensure emails is always an array
-      const emailsArray = emails || [];
-      const found = emailsArray.find((e) => e.id === emailId);
+    let sourceColumnId: string | undefined;
+    for (const [colId, emails] of Object.entries(kanbanEmails)) {
+      if (!emails) continue; // Skip null/undefined arrays
+      const found = emails.find((e) => e.id === emailId);
       if (found) {
         movedEmail = found;
+        sourceColumnId = colId;
         break;
       }
     }
@@ -367,9 +369,11 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
-        // Ensure emails is always an array
-        const emailsArray = emails || [];
-        const filtered = emailsArray.filter((e) => {
+        if (!emails) {
+          newEmails[col] = [];
+          return;
+        }
+        const filtered = emails.filter((e) => {
           if (e.id === emailId) {
             movedEmail = e;
             return false;
@@ -391,8 +395,8 @@ export default function KanbanPage() {
       
       return newEmails;
     });
-    // Call API update (không reload lại list, tin vào optimistic update)
-    emailService.moveEmailToMailbox(emailId, targetColumnId).catch((error) => {
+    // Call API update with source column ID (không reload lại list, tin vào optimistic update)
+    emailService.moveEmailToMailbox(emailId, targetColumnId, sourceColumnId).catch((error) => {
       console.error("Error moving email:", error);
       // Trường hợp lỗi, có thể cân nhắc rollback state hoặc chờ SSE đồng bộ
     });
@@ -409,9 +413,11 @@ export default function KanbanPage() {
       
       // Remove email from all columns
       Object.entries(prev).forEach(([col, emails]) => {
-        // Ensure emails is always an array
-        const emailsArray = emails || [];
-        const filtered = emailsArray.filter((e) => {
+        if (!emails) {
+          newEmails[col] = [];
+          return;
+        }
+        const filtered = emails.filter((e) => {
           if (e.id === emailToSnooze.id) {
             movedEmail = e;
             return false;
@@ -1036,7 +1042,18 @@ export default function KanbanPage() {
       {/* Kanban Settings Modal */}
       <KanbanSettings
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={async () => {
+          setIsSettingsOpen(false);
+          // Reload columns after settings are closed to sync local state with any changes
+          try {
+            const columns = await emailService.getKanbanColumns();
+            setKanbanColumnConfigs(columns);
+            // Also reload emails for all columns
+            await reloadAllKanbanColumns();
+          } catch (error) {
+            console.error("Error reloading columns after settings:", error);
+          }
+        }}
         availableLabels={mailboxes.map((mb) => ({ id: mb.id, name: mb.name }))}
       />
     </div>

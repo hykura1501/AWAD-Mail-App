@@ -28,10 +28,12 @@ export const emailService = {
   },
   moveEmailToMailbox: async (
     emailId: string,
-    mailboxId: string
+    mailboxId: string,
+    sourceColumnId?: string
   ): Promise<void> => {
     await apiClient.patch(`/emails/${emailId}/mailbox`, {
       mailbox_id: mailboxId,
+      source_column_id: sourceColumnId,
     });
   },
   snoozeEmail: async (emailId: string, snoozeUntil: Date): Promise<void> => {

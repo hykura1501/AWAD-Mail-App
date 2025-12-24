@@ -608,7 +608,7 @@ func (u *emailUsecase) WatchMailbox(userID string) error {
 }
 
 // Move email to another mailbox (Kanban drag & drop)
-func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID string) error {
+func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID, sourceColumnID string) error {
 	user, err := u.userRepo.FindByID(userID)
 	if err != nil {
 		return err
@@ -637,32 +637,63 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID string) err
 
 	// For Gmail provider, sync labels based on Kanban column configuration
 	if user.Provider == "google" && u.mailProvider != nil {
-		// Get column configuration
-		column, err := u.kanbanColumnRepo.GetColumnByID(userID, mailboxID)
+		// Get target column configuration
+		targetColumn, err := u.kanbanColumnRepo.GetColumnByID(userID, mailboxID)
 		if err != nil {
-			return fmt.Errorf("failed to get column config: %w", err)
+			return fmt.Errorf("failed to get target column config: %w", err)
 		}
 
-		if column != nil {
-			// Prepare label IDs to add and remove
-			addLabelIDs := []string{}
-			removeLabelIDs := []string{}
+		// Get source column configuration
+		// First try from DB mapping, then use sourceColumnID from frontend
+		dbSourceColumnID, _ := u.emailKanbanColumnRepo.GetEmailColumn(userID, emailID)
+		actualSourceColumnID := dbSourceColumnID
+		if actualSourceColumnID == "" && sourceColumnID != "" {
+			// Use the sourceColumnID passed from frontend
+			actualSourceColumnID = sourceColumnID
+		}
 
-			if column.GmailLabelID != "" {
-				addLabelIDs = append(addLabelIDs, column.GmailLabelID)
+		var sourceColumn *emaildomain.KanbanColumn
+		if actualSourceColumnID != "" && actualSourceColumnID != mailboxID {
+			sourceColumn, _ = u.kanbanColumnRepo.GetColumnByID(userID, actualSourceColumnID)
+		}
+
+		// Prepare label IDs to add and remove
+		addLabelIDs := []string{}
+		removeLabelIDs := []string{}
+
+		// Add target column's label (or INBOX if no label configured)
+		if targetColumn != nil && targetColumn.GmailLabelID != "" {
+			addLabelIDs = append(addLabelIDs, targetColumn.GmailLabelID)
+		} else {
+			// If target column has no label mapping, add INBOX to keep email visible
+			addLabelIDs = append(addLabelIDs, "INBOX")
+		}
+
+		// Add target column's remove_label_ids to removeLabelIDs
+		if targetColumn != nil && len(targetColumn.RemoveLabelIDs) > 0 {
+			removeLabelIDs = append(removeLabelIDs, []string(targetColumn.RemoveLabelIDs)...)
+		}
+
+		// Remove source column's label (when leaving the column)
+		if sourceColumn != nil && sourceColumn.GmailLabelID != "" {
+			// Only remove if it's not the same as the target label
+			if targetColumn == nil || sourceColumn.GmailLabelID != targetColumn.GmailLabelID {
+				removeLabelIDs = append(removeLabelIDs, sourceColumn.GmailLabelID)
 			}
+		}
 
-			if len(column.RemoveLabelIDs) > 0 {
-				removeLabelIDs = append(removeLabelIDs, []string(column.RemoveLabelIDs)...)
-			}
-
-			// Apply label changes via Gmail API
-			if len(addLabelIDs) > 0 || len(removeLabelIDs) > 0 {
-				ctx := context.Background()
-				err = u.mailProvider.ModifyMessageLabels(ctx, accessToken, refreshToken, emailID, addLabelIDs, removeLabelIDs, u.makeTokenUpdateCallback(userID))
-				if err != nil {
-					return fmt.Errorf("failed to modify message labels: %w", err)
-				}
+		// Apply label changes via Gmail API
+		if len(addLabelIDs) > 0 || len(removeLabelIDs) > 0 {
+			ctx := context.Background()
+			log.Printf("[MoveEmail] Source: %s (label: %v), Target: %s (label: %v)",
+				actualSourceColumnID, 
+				func() string { if sourceColumn != nil { return sourceColumn.GmailLabelID } else { return "nil" }}(),
+				mailboxID,
+				func() string { if targetColumn != nil { return targetColumn.GmailLabelID } else { return "nil" }}())
+			log.Printf("[MoveEmail] Applying labels - Add: %v, Remove: %v", addLabelIDs, removeLabelIDs)
+			err = u.mailProvider.ModifyMessageLabels(ctx, accessToken, refreshToken, emailID, addLabelIDs, removeLabelIDs, u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				return fmt.Errorf("failed to modify message labels: %w", err)
 			}
 		}
 	}
@@ -740,9 +771,31 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 	}
 
 	ctx := context.Background()
-	// Fetch emails from INBOX (we'll filter them based on column mapping)
-	// Note: For custom columns, we fetch from INBOX and filter by DB mapping
-	// This means archived emails won't appear in custom columns
+
+	// Check if this column has a Gmail label mapping
+	column, _ := u.kanbanColumnRepo.GetColumnByID(userID, status)
+
+	// If column has gmail_label_id, fetch emails directly from Gmail using that label
+	if column != nil && column.GmailLabelID != "" {
+		log.Printf("[GetEmailsByStatus] Column %s mapped to Gmail label %s - fetching from Gmail", status, column.GmailLabelID)
+
+		// Use the Gmail label ID directly to fetch emails
+		emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, column.GmailLabelID, limit, offset, "", u.makeTokenUpdateCallback(userID))
+		if err != nil {
+			// If label doesn't exist or error, fallback to empty
+			log.Printf("[GetEmailsByStatus] Failed to fetch from label %s: %v", column.GmailLabelID, err)
+			return []*emaildomain.Email{}, 0, nil
+		}
+
+		// Sync emails to vector DB asynchronously
+		for _, email := range emails {
+			u.syncEmailToVectorDB(userID, email)
+		}
+
+		return emails, total, nil
+	}
+
+	// Default behavior: Fetch from INBOX and filter by local mapping
 	emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit*2, offset, "", u.makeTokenUpdateCallback(userID))
 	if err != nil {
 		return nil, 0, err
@@ -804,7 +857,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			}
 		}
 	} else {
-		// Custom column: check DB mapping only
+		// Custom column without gmail_label_id: check DB mapping only
 		dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
 		if err != nil {
 			// If error, return empty list
@@ -1188,8 +1241,24 @@ func (u *emailUsecase) CreateKanbanColumn(userID string, column *emaildomain.Kan
 
 // UpdateKanbanColumn updates a Kanban column
 func (u *emailUsecase) UpdateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error {
-	column.UserID = userID
-	return u.kanbanColumnRepo.UpdateColumn(column)
+	// Fetch existing column to get the primary key ID
+	existing, err := u.kanbanColumnRepo.GetColumnByID(userID, column.ColumnID)
+	if err != nil {
+		return fmt.Errorf("failed to find column: %w", err)
+	}
+	if existing == nil {
+		return fmt.Errorf("column not found: %s", column.ColumnID)
+	}
+
+	// Preserve the primary key ID and merge updates
+	existing.Name = column.Name
+	existing.GmailLabelID = column.GmailLabelID
+	existing.RemoveLabelIDs = column.RemoveLabelIDs
+	if column.Order > 0 {
+		existing.Order = column.Order
+	}
+
+	return u.kanbanColumnRepo.UpdateColumn(existing)
 }
 
 // DeleteKanbanColumn deletes a Kanban column
