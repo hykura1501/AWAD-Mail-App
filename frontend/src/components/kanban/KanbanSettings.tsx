@@ -6,22 +6,22 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 // Default columns that are always present (fixed, cannot be deleted)
 // With default Gmail label mappings
-const DEFAULT_COLUMNS: Array<{ 
-  column_id: string; 
-  name: string; 
+const DEFAULT_COLUMNS: Array<{
+  column_id: string;
+  name: string;
   isDefault: true;
   gmail_label_id?: string;
   remove_label_ids?: string[];
 }> = [
-  { column_id: "inbox", name: "Inbox", isDefault: true, gmail_label_id: "INBOX", remove_label_ids: ["INBOX"] },
-  { column_id: "todo", name: "To Do", isDefault: true, gmail_label_id: "IMPORTANT", remove_label_ids: ["IMPORTANT"] },
-  { column_id: "done", name: "Done", isDefault: true, gmail_label_id: "STARRED", remove_label_ids: ["STARRED"] },
-  { column_id: "snoozed", name: "Snoozed", isDefault: true }, // Managed locally, no Gmail label
-];
+    { column_id: "inbox", name: "Inbox", isDefault: true, gmail_label_id: "INBOX", remove_label_ids: ["INBOX"] },
+    { column_id: "todo", name: "To Do", isDefault: true, gmail_label_id: "IMPORTANT", remove_label_ids: ["IMPORTANT"] },
+    { column_id: "done", name: "Done", isDefault: true, gmail_label_id: "STARRED", remove_label_ids: ["STARRED"] },
+    { column_id: "snoozed", name: "Snoozed", isDefault: true }, // Managed locally, no Gmail label
+  ];
 
 interface KanbanSettingsProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (hasChanges?: boolean) => void;
   availableLabels: Array<{ id: string; name: string }>; // Available Gmail labels for mapping
 }
 
@@ -36,6 +36,8 @@ export default function KanbanSettings({
   );
   const [isCreating, setIsCreating] = useState(false);
 
+  const [hasChanges, setHasChanges] = useState(false);
+
   // Fetch columns from API
   const { data: apiColumns = [], isLoading } = useQuery({
     queryKey: ["kanbanColumns"],
@@ -46,7 +48,7 @@ export default function KanbanSettings({
   // Merge default columns with API columns
   const columns = useMemo(() => {
     const result: Array<KanbanColumnConfig & { isDefault?: boolean }> = [];
-    
+
     // Add default columns first, merging with API data if exists
     for (const defaultCol of DEFAULT_COLUMNS) {
       const apiCol = apiColumns.find(c => c.column_id === defaultCol.column_id);
@@ -69,7 +71,7 @@ export default function KanbanSettings({
         });
       }
     }
-    
+
     // Add custom columns (non-default) after
     const defaultIds = new Set(DEFAULT_COLUMNS.map(c => c.column_id));
     for (const col of apiColumns) {
@@ -77,10 +79,10 @@ export default function KanbanSettings({
         result.push({ ...col, isDefault: false });
       }
     }
-    
+
     // Sort by order field
     result.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    
+
     return result;
   }, [apiColumns]);
 
@@ -105,6 +107,7 @@ export default function KanbanSettings({
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
       setIsCreating(false);
       setCreateRemoveLabels("");
+      setHasChanges(true); // Mark as changed
     },
   });
 
@@ -121,6 +124,7 @@ export default function KanbanSettings({
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
       setEditingColumn(null);
       setEditRemoveLabels("");
+      setHasChanges(true); // Mark as changed
     },
   });
 
@@ -129,6 +133,7 @@ export default function KanbanSettings({
     mutationFn: (columnId: string) => emailService.deleteKanbanColumn(columnId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
+      setHasChanges(true); // Mark as changed
     },
   });
 
@@ -137,7 +142,7 @@ export default function KanbanSettings({
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const gmailLabelId = (formData.get("gmail_label_id") as string) || "";
-    
+
     // Check if label is already used by another column
     if (gmailLabelId) {
       const existingColumn = columns.find(
@@ -276,9 +281,9 @@ export default function KanbanSettings({
       };
       createMutation.mutate(newColumn);
     } else {
-      updateMutation.mutate({ 
-        columnId: pendingUpdate.columnId, 
-        column: pendingUpdate.updates 
+      updateMutation.mutate({
+        columnId: pendingUpdate.columnId,
+        column: pendingUpdate.updates
       });
     }
 
@@ -304,7 +309,7 @@ export default function KanbanSettings({
             Kanban Board Settings
           </h2>
           <button
-            onClick={onClose}
+            onClick={() => onClose(hasChanges)}
             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-gray-400" />
@@ -332,11 +337,10 @@ export default function KanbanSettings({
                   columns.map((column) => (
                     <div
                       key={column.column_id}
-                      className={`border rounded-lg p-3 ${
-                        column.isDefault 
-                          ? "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20" 
-                          : "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
-                      }`}
+                      className={`border rounded-lg p-3 ${column.isDefault
+                        ? "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20"
+                        : "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
+                        }`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -430,8 +434,8 @@ export default function KanbanSettings({
                           const isOwnLabel = editingColumn.gmail_label_id === label.id;
                           const isDisabled = !isOwnLabel && !!usedByColumn;
                           return (
-                            <option 
-                              key={label.id} 
+                            <option
+                              key={label.id}
                               value={label.id}
                               disabled={isDisabled}
                             >
@@ -523,8 +527,8 @@ export default function KanbanSettings({
                         {availableLabels.map((label) => {
                           const usedByColumn = usedLabels.get(label.id);
                           return (
-                            <option 
-                              key={label.id} 
+                            <option
+                              key={label.id}
                               value={label.id}
                               disabled={!!usedByColumn}
                             >
@@ -583,7 +587,7 @@ export default function KanbanSettings({
         {/* Footer */}
         <div className="p-4 border-t border-gray-200 dark:border-gray-700">
           <button
-            onClick={onClose}
+            onClick={() => onClose(hasChanges)}
             className="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
           >
             Close
@@ -603,12 +607,12 @@ export default function KanbanSettings({
                 Label Configuration Mismatch
               </h3>
             </div>
-            
+
             <p className="text-gray-600 dark:text-gray-400 mb-4">
-              The <strong>Gmail Label (Add)</strong> is different from <strong>Remove Labels</strong>. 
+              The <strong>Gmail Label (Add)</strong> is different from <strong>Remove Labels</strong>.
               This means when an email enters this column, a different label will be added than what's removed when leaving.
             </p>
-            
+
             <p className="text-sm text-gray-500 dark:text-gray-500 mb-6">
               <strong>Recommendation:</strong> The Add and Remove labels should typically be the same for consistent behavior.
             </p>
@@ -643,14 +647,14 @@ export default function KanbanSettings({
                 Label Already Used
               </h3>
             </div>
-            
+
             <p className="text-gray-600 dark:text-gray-400 mb-4">
-              The label <strong className="text-red-600 dark:text-red-400">"{duplicateLabelError.labelId}"</strong> is already 
+              The label <strong className="text-red-600 dark:text-red-400">"{duplicateLabelError.labelId}"</strong> is already
               mapped to column <strong>"{duplicateLabelError.existingColumnName}"</strong>.
             </p>
-            
+
             <p className="text-sm text-gray-500 dark:text-gray-500 mb-6">
-              Each Gmail label can only be mapped to <strong>one column</strong>. 
+              Each Gmail label can only be mapped to <strong>one column</strong>.
               Please choose a different label or remove the mapping from the other column first.
             </p>
 
