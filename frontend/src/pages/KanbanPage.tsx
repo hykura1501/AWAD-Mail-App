@@ -17,7 +17,9 @@ import KanbanToggle from "@/components/kanban/KanbanToggle";
 import KanbanFilters, { type SortOption, type FilterState } from "@/components/kanban/KanbanFilters";
 import { SnoozeDialog } from "@/components/inbox/SnoozeDialog";
 import KanbanSettings from "@/components/kanban/KanbanSettings";
+import SnoozedDrawer from "@/components/kanban/SnoozedDrawer";
 import { Settings } from "lucide-react";
+import { getKanbanColumnFromCache, saveKanbanColumnToCache } from "@/lib/db";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
@@ -87,6 +89,9 @@ export default function KanbanPage() {
   // Settings modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Snoozed drawer state
+  const [isSnoozedDrawerOpen, setIsSnoozedDrawerOpen] = useState(false);
+
   // Kanban columns configuration (loaded eagerly, no caching)
   const [kanbanColumnConfigs, setKanbanColumnConfigs] = useState<
     KanbanColumnConfig[]
@@ -121,11 +126,11 @@ export default function KanbanPage() {
   });
   const limit = 20;
 
-  // Loading state for each Kanban column
-  const [isLoadingInbox, setIsLoadingInbox] = useState(false);
-  const [isLoadingTodo, setIsLoadingTodo] = useState(false);
-  const [isLoadingDone, setIsLoadingDone] = useState(false);
-  const [isLoadingSnoozed, setIsLoadingSnoozed] = useState(false);
+  // Loading state for each Kanban column (start with true to show skeleton)
+  const [isLoadingInbox, setIsLoadingInbox] = useState(true);
+  const [isLoadingTodo, setIsLoadingTodo] = useState(true);
+  const [isLoadingDone, setIsLoadingDone] = useState(true);
+  const [isLoadingSnoozed, setIsLoadingSnoozed] = useState(true);
 
   // State emails cho từng cột (optimistic update)
   // Use Record to allow dynamic column IDs (including custom columns)
@@ -162,47 +167,101 @@ export default function KanbanPage() {
     });
   };
 
-  // Eager loading helpers (no React Query caching)
-  const loadKanbanColumn = async (status: string, offset: number) => {
-    try {
-      if (status === "inbox") setIsLoadingInbox(true);
-      if (status === "todo") setIsLoadingTodo(true);
-      if (status === "done") setIsLoadingDone(true);
-      if (status === "snoozed") setIsLoadingSnoozed(true);
+  // Helper function to clean preview text (strip HTML/CSS code)
+  const cleanPreviewText = (text: string | undefined): string => {
+    if (!text) return "Không có nội dung xem trước";
+    let cleaned = text;
+    
+    // Remove HTML tags
+    cleaned = cleaned.replace(/<[^>]*>/g, " ");
+    
+    // Remove CSS blocks: *{...}, .class{...}, #id{...}, element{...}, [attr]{...}
+    cleaned = cleaned.replace(/[\*\.\#]?[a-zA-Z0-9_\-\[\]='"]+\s*\{[^}]*\}/g, " ");
+    
+    // Remove remaining CSS property patterns: property: value; or property: value !important
+    cleaned = cleaned.replace(/[a-zA-Z\-]+\s*:\s*[^;{}]+(!important)?;?/gi, " ");
+    
+    // Remove attribute selectors like [x-apple-data-detectors]
+    cleaned = cleaned.replace(/\[[^\]]+\]/g, " ");
+    
+    // Remove CSS at-rules like @media, @font-face
+    cleaned = cleaned.replace(/@[a-zA-Z\-]+[^{]*\{[^}]*\}/g, " ");
+    
+    // Remove numbers followed by special chars that look like CSS (e.g., "96 *")
+    cleaned = cleaned.replace(/\d+\s*[\*\.\#]/g, " ");
+    
+    // Remove common CSS keywords
+    cleaned = cleaned.replace(/\b(important|inherit|none|auto|px|em|rem|%|rgb|rgba|hsl|hsla)\b/gi, " ");
+    
+    // Remove extra whitespace
+    cleaned = cleaned.replace(/\s+/g, " ").trim();
+    
+    return cleaned.length > 5 ? cleaned : "Không có nội dung xem trước";
+  };
 
+  // Eager loading helpers with IndexedDB cache-first strategy
+  const loadKanbanColumn = async (status: string, offset: number) => {
+    const setLoading = (loading: boolean) => {
+      if (status === "inbox") setIsLoadingInbox(loading);
+      if (status === "todo") setIsLoadingTodo(loading);
+      if (status === "done") setIsLoadingDone(loading);
+      if (status === "snoozed") setIsLoadingSnoozed(loading);
+    };
+
+    try {
+      setLoading(true);
+      
+      // 1. Try to load from cache first (instant display)
+      const cachedEmails = await getKanbanColumnFromCache(status);
+      if (cachedEmails && cachedEmails.length > 0 && offset === 0) {
+        setKanbanEmails((prev) => ({
+          ...prev,
+          [status]: cachedEmails,
+        }));
+        // Turn off loading immediately after showing cached data
+        setLoading(false);
+      }
+
+      // 2. Fetch fresh data from API
       const data = await emailService.getEmailsByStatus(status, limit, offset);
+      
+      // 3. Update state with fresh data
       setKanbanEmails((prev) => ({
         ...prev,
         [status]: data.emails,
       }));
+      
+      // 4. Save to cache for next time (only for first page)
+      if (offset === 0) {
+        saveKanbanColumnToCache(status, data.emails);
+      }
     } finally {
-      if (status === "inbox") setIsLoadingInbox(false);
-      if (status === "todo") setIsLoadingTodo(false);
-      if (status === "done") setIsLoadingDone(false);
-      if (status === "snoozed") setIsLoadingSnoozed(false);
+      setLoading(false);
     }
   };
 
+  // OPTIMIZED: Reload columns in batches of 2 to avoid overwhelming the backend
   const reloadAllKanbanColumns = async () => {
-    const defaultLoads = [
-      loadKanbanColumn("inbox", kanbanOffsets.inbox ?? 0),
-      loadKanbanColumn("todo", kanbanOffsets.todo ?? 0),
-      loadKanbanColumn("done", kanbanOffsets.done ?? 0),
-      loadKanbanColumn("snoozed", kanbanOffsets.snoozed ?? 0),
+    const defaultIds = new Set(["inbox", "todo", "done", "snoozed"]);
+    const allColumnIds = [
+      "inbox", "todo", "done", "snoozed",
+      ...kanbanColumnConfigs.filter((c) => !defaultIds.has(c.column_id)).map((c) => c.column_id)
     ];
 
-    // Load thêm các custom columns nếu có cấu hình (dùng column_id làm status)
-    const defaultIds = new Set(["inbox", "todo", "done", "snoozed"]);
-    const customLoads = kanbanColumnConfigs
-      .filter((c) => !defaultIds.has(c.column_id))
-      .map((c) =>
-        loadKanbanColumn(c.column_id, kanbanOffsets[c.column_id] ?? 0)
+    // Load in batches of 2
+    const batchSize = 2;
+    for (let i = 0; i < allColumnIds.length; i += batchSize) {
+      const batch = allColumnIds.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map((colId) =>
+          loadKanbanColumn(colId, kanbanOffsets[colId] ?? 0)
+        )
       );
-
-    await Promise.all([...defaultLoads, ...customLoads]);
+    }
   };
 
   // Initial load: fetch columns + mailboxes, rồi fetch emails cho tất cả cột (default + custom)
+  // OPTIMIZED: Load columns in batches to avoid overwhelming the backend
   useEffect(() => {
     const initKanban = async () => {
       try {
@@ -216,28 +275,50 @@ export default function KanbanPage() {
 
         // 2. Xác định danh sách cột cần fetch (default + custom)
         const defaultIds = new Set(["inbox", "todo", "done", "snoozed"]);
+        const allColumnIds = [
+          "inbox", "todo", "done", "snoozed",
+          ...columns.filter((c) => !defaultIds.has(c.column_id)).map((c) => c.column_id)
+        ];
 
-        const allLoads: Promise<void>[] = [];
-
-        // Default columns
-        allLoads.push(
-          loadKanbanColumn("inbox", kanbanOffsets.inbox ?? 0),
-          loadKanbanColumn("todo", kanbanOffsets.todo ?? 0),
-          loadKanbanColumn("done", kanbanOffsets.done ?? 0),
-          loadKanbanColumn("snoozed", kanbanOffsets.snoozed ?? 0)
-        );
-
-        // Custom columns từ backend
-        columns
-          .filter((c) => !defaultIds.has(c.column_id))
-          .forEach((c) => {
-            allLoads.push(
-              loadKanbanColumn(c.column_id, kanbanOffsets[c.column_id] ?? 0)
-            );
-          });
-
-        // 3. Fetch emails cho tất cả cột trên
-        await Promise.all(allLoads);
+        // 3. Load columns in batches of 2 and collect all email IDs
+        const batchSize = 2;
+        const allLoadedEmailIds: string[] = [];
+        
+        for (let i = 0; i < allColumnIds.length; i += batchSize) {
+          const batch = allColumnIds.slice(i, i + batchSize);
+          const results = await Promise.all(
+            batch.map(async (colId) => {
+              const data = await emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] ?? 0);
+              setKanbanEmails((prev) => ({
+                ...prev,
+                [colId]: data.emails,
+              }));
+              return data.emails.map((e) => e.id);
+            })
+          );
+          // Flatten and collect all email IDs
+          results.forEach((ids) => allLoadedEmailIds.push(...ids));
+        }
+        
+        // 4. Queue AI summaries for all loaded emails (background processing)
+        if (allLoadedEmailIds.length > 0) {
+          try {
+            const { summaries } = await emailService.queueSummaries(allLoadedEmailIds);
+            // Apply cached summaries immediately
+            if (Object.keys(summaries).length > 0) {
+              setSummaryStates((prev) => {
+                const next = { ...prev };
+                for (const [emailId, summary] of Object.entries(summaries)) {
+                  next[emailId] = { summary, loading: false };
+                }
+                return next;
+              });
+            }
+          } catch (error) {
+            console.error("Error queueing summaries:", error);
+          }
+        }
+        
       } catch (error) {
         console.error("Error initializing Kanban:", error);
       }
@@ -484,19 +565,14 @@ export default function KanbanPage() {
         offset: kanbanOffsets.done,
         limit,
       },
-      {
-        id: "snoozed",
-        title: "Snoozed",
-        emails: processEmails(kanbanEmails.snoozed),
-        offset: kanbanOffsets.snoozed,
-        limit,
-      },
+      // Snoozed column is now shown in a drawer, not as a column
     ];
 
     // Get default column IDs to exclude from custom columns (to avoid duplicates)
-    const defaultColumnIds = new Set(defaultColumns.map((col) => col.id));
+    // Also exclude 'snoozed' since it's now displayed in a drawer
+    const defaultColumnIds = new Set([...defaultColumns.map((col) => col.id), 'snoozed']);
 
-    // Add custom columns from configuration (excluding default columns)
+    // Add custom columns from configuration (excluding default columns and snoozed)
     const customColumns = kanbanColumnConfigs
       .filter((config) => !defaultColumnIds.has(config.column_id))
       .sort((a, b) => a.order - b.order)
@@ -539,6 +615,19 @@ export default function KanbanPage() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
+          // Handle real-time summary updates from AI worker
+          if (data.type === "summary_update") {
+            const { email_id, summary } = data.payload || {};
+            if (email_id && summary) {
+              setSummaryStates((prev) => ({
+                ...prev,
+                [email_id]: { summary, loading: false },
+              }));
+            }
+            return;
+          }
+          
           if (data.type === "email_update") {
             // Ignore SSE updates for 3 seconds after user actions to prevent conflicts
             const timeSinceLastMutation = Date.now() - lastMutationTime;
@@ -638,6 +727,8 @@ export default function KanbanPage() {
           onSortChange={setSortBy}
           filters={filters}
           onFilterChange={setFilters}
+          snoozedCount={kanbanEmails.snoozed?.length || 0}
+          onSnoozedClick={() => setIsSnoozedDrawerOpen(true)}
         />
       </div>
 
@@ -678,36 +769,41 @@ export default function KanbanPage() {
                 ) : (
                   <button
                     className="px-2 py-1 rounded bg-green-400 text-xs text-black hover:bg-green-500"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      setKanbanEmails((prev) => {
-                        let movedEmail: Email | undefined;
-                        const newEmails = Object.fromEntries(
-                          Object.entries(prev).map(([col, emails]) => {
-                            // Ensure emails is always an array
-                            const emailsArray = emails || [];
-                            const filtered = emailsArray.filter((ee) => {
-                              if (ee.id === email.id) {
-                                movedEmail = ee;
-                                return false;
-                              }
-                              return true;
-                            });
-                            return [col, filtered];
-                          })
-                        ) as typeof prev;
-                        if (movedEmail) {
-                          movedEmail.mailbox_id = "inbox";
-                          newEmails.inbox = [movedEmail, ...newEmails.inbox];
-                        }
-                        return newEmails;
-                      });
-                      // Chỉ call API update, không reload lại toàn bộ Kanban
-                      emailService
-                        .moveEmailToMailbox(email.id, "inbox")
-                        .catch((error) => {
-                          console.error("Error unsnoozing email:", error);
+                      try {
+                        const { targetColumn } = await emailService.unsnoozeEmail(email.id);
+                        setKanbanEmails((prev) => {
+                          let movedEmail: Email | undefined;
+                          const newEmails = Object.fromEntries(
+                            Object.entries(prev).map(([col, emails]) => {
+                              const emailsArray = emails || [];
+                              const filtered = emailsArray.filter((ee) => {
+                                if (ee.id === email.id) {
+                                  movedEmail = ee;
+                                  return false;
+                                }
+                                return true;
+                              });
+                              return [col, filtered];
+                            })
+                          ) as typeof prev;
+                          if (movedEmail) {
+                            movedEmail.mailbox_id = targetColumn;
+                            if (!newEmails[targetColumn]) {
+                              newEmails[targetColumn] = [];
+                            }
+                            newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
+                          }
+                          return newEmails;
                         });
+                        
+                        // Refresh target column and snoozed column from server
+                        loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
+                        loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+                      } catch (error) {
+                        console.error("Error unsnoozing email:", error);
+                      }
                     }}
                   >
                     Unsnooze
@@ -813,11 +909,30 @@ export default function KanbanPage() {
                             </span>
                           </div>
                           <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
-                            {email.from_name || email.from}
+                            {(() => {
+                              let name = email.from_name || email.from || "";
+                              // Extract just the name if in "Name <email>" format
+                              const match = name.match(/^"?([^"<]+)"?\s*</);
+                              if (match) name = match[1].trim();
+                              // Remove surrounding quotes
+                              name = name.replace(/^"|"$/g, "");
+                              return name || "Unknown Sender";
+                            })()}
                           </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-                            {email.preview}
-                          </p>
+                          {/* Show AI summary if available, otherwise show preview */}
+                          {summaryStates[email.id]?.summary ? (
+                            <p className="text-xs text-blue-600 dark:text-blue-400 line-clamp-3 italic">
+                              ✨ {summaryStates[email.id].summary}
+                            </p>
+                          ) : summaryStates[email.id]?.loading ? (
+                            <p className="text-xs text-gray-400 dark:text-gray-500 line-clamp-2 animate-pulse">
+                              Đang tóm tắt...
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
+                              {cleanPreviewText(email.preview)}
+                            </p>
+                          )}
 
                           {/* Action Buttons */}
                           <div className="mt-3 flex gap-2">
@@ -841,43 +956,42 @@ export default function KanbanPage() {
                             ) : (
                               <button
                                 className="px-3 py-1.5 rounded bg-green-400 text-xs text-black hover:bg-green-500"
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                   e.stopPropagation();
-                                  setKanbanEmails((prev) => {
-                                    let movedEmail: Email | undefined;
-                                    const newEmails = Object.fromEntries(
-                                      Object.entries(prev).map(
-                                        ([col, emails]) => {
-                                          // Ensure emails is always an array
+                                  try {
+                                    const { targetColumn } = await emailService.unsnoozeEmail(email.id);
+                                    setKanbanEmails((prev) => {
+                                      let movedEmail: Email | undefined;
+                                      const newEmails = Object.fromEntries(
+                                        Object.entries(prev).map(([col, emails]) => {
                                           const emailsArray = emails || [];
-                                          const filtered = emailsArray.filter(
-                                            (e) => {
-                                              if (e.id === email.id) {
-                                                movedEmail = e;
-                                                return false;
-                                              }
-                                              return true;
+                                          const filtered = emailsArray.filter((ee) => {
+                                            if (ee.id === email.id) {
+                                              movedEmail = ee;
+                                              return false;
                                             }
-                                          );
+                                            return true;
+                                          });
                                           return [col, filtered];
+                                        })
+                                      ) as typeof prev;
+                                      if (movedEmail) {
+                                        movedEmail.mailbox_id = targetColumn;
+                                        if (!newEmails[targetColumn]) {
+                                          newEmails[targetColumn] = [];
                                         }
-                                      )
-                                    ) as typeof prev;
-                                    if (movedEmail) {
-                          movedEmail.mailbox_id = "inbox";
-                          newEmails.inbox = [movedEmail, ...newEmails.inbox];
-                                    }
-                                    return newEmails;
-                                  });
-                                  // Chỉ call API update, không reload lại toàn bộ Kanban
-                                  emailService
-                                    .moveEmailToMailbox(email.id, "inbox")
-                                    .catch((error) => {
-                                      console.error(
-                                        "Error unsnoozing email (mobile):",
-                                        error
-                                      );
+                                        newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
+                                      }
+                                      return newEmails;
                                     });
+                                    setMobileSelectedColumn(targetColumn);
+                                    
+                                    // Refresh target column and snoozed column from server
+                                    loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
+                                    loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+                                  } catch (error) {
+                                    console.error("Error unsnoozing email (mobile):", error);
+                                  }
                                 }}
                               >
                                 <span className="material-symbols-outlined text-xs mr-1">
@@ -1055,6 +1169,56 @@ export default function KanbanPage() {
           }
         }}
         availableLabels={mailboxes.map((mb) => ({ id: mb.id, name: mb.name }))}
+      />
+
+      {/* Snoozed Drawer */}
+      <SnoozedDrawer
+        isOpen={isSnoozedDrawerOpen}
+        onClose={() => setIsSnoozedDrawerOpen(false)}
+        emails={kanbanEmails.snoozed || []}
+        onUnsnooze={async (emailId) => {
+          try {
+            // Call API first to get target column
+            const { targetColumn } = await emailService.unsnoozeEmail(emailId);
+            
+            // Optimistic update - move to target column
+            setKanbanEmails((prev) => {
+              let movedEmail: Email | undefined;
+              const newEmails = Object.fromEntries(
+                Object.entries(prev).map(([col, emails]) => {
+                  const emailsArray = emails || [];
+                  const filtered = emailsArray.filter((ee) => {
+                    if (ee.id === emailId) {
+                      movedEmail = ee;
+                      return false;
+                    }
+                    return true;
+                  });
+                  return [col, filtered];
+                })
+              ) as typeof prev;
+              if (movedEmail) {
+                movedEmail.mailbox_id = targetColumn;
+                // Initialize target column if it doesn't exist
+                if (!newEmails[targetColumn]) {
+                  newEmails[targetColumn] = [];
+                }
+                newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
+              }
+              return newEmails;
+            });
+            
+            // Refresh target column and snoozed column from server
+            loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
+            loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+          } catch (error) {
+            console.error("Error unsnoozing email:", error);
+          }
+        }}
+        onEmailClick={(emailId) => setDetailEmailId(emailId)}
+        offset={kanbanOffsets.snoozed}
+        limit={limit}
+        onPageChange={(dir) => handleKanbanPage("snoozed", dir)}
       />
     </div>
   );

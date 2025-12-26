@@ -32,7 +32,7 @@ func main() {
 	}
 
 	// Auto-migrate database schemas
-	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}, &emaildomain.KanbanColumn{}, &emaildomain.EmailKanbanColumn{}); err != nil {
+	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}, &emaildomain.KanbanColumn{}, &emaildomain.EmailKanbanColumn{}, &emaildomain.EmailSummary{}); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
@@ -42,6 +42,7 @@ func main() {
 	emailSyncHistoryRepo := emailRepo.NewEmailSyncHistoryRepository(db)
 	kanbanColumnRepo := emailRepo.NewKanbanColumnRepository(db)
 	emailKanbanColumnRepo := emailRepo.NewEmailKanbanColumnRepository(db)
+	emailSummaryRepo := emailRepo.NewEmailSummaryRepository(db)
 
 	// Initialize SSE Manager
 	sseManager := sse.NewManager()
@@ -82,7 +83,7 @@ func main() {
 	authUsecaseInstance.SetEmailSyncCallback(emailUsecaseInstance.SyncAllEmailsForUser)
 
 	// Initialize HTTP handler
-	handler := api.NewHandler(authUsecaseInstance, emailUsecaseInstance, sseManager, cfg)
+	handler := api.NewHandler(authUsecaseInstance, emailUsecaseInstance, sseManager, cfg, emailSummaryRepo)
 
 	// Start server
 

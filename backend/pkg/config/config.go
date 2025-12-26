@@ -29,6 +29,11 @@ type Config struct {
 	ChromaAPIKey       string
 	ChromaTenant       string
 	ChromaDatabase     string
+	
+	// AI Provider config (gemini/ollama)
+	AIProvider    string // "gemini" or "ollama"
+	OllamaBaseURL string // e.g., "http://localhost:11434"
+	OllamaModel   string // e.g., "llama3", "mistral", "qwen2"
 }
 
 func Load() *Config {
@@ -71,6 +76,10 @@ func Load() *Config {
 		ChromaAPIKey:       os.Getenv("CHROMA_API_KEY"),
 		ChromaTenant:       os.Getenv("CHROMA_TENANT"),
 		ChromaDatabase:     os.Getenv("CHROMA_DATABASE"),
+		// AI Provider config
+		AIProvider:    getEnv("AI_PROVIDER", "gemini"), // "gemini" or "ollama"
+		OllamaBaseURL: getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		OllamaModel:   getEnv("OLLAMA_MODEL", "llama3"),
 	}
 }
 

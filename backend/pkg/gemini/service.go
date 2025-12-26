@@ -18,12 +18,22 @@ func NewGeminiService(apiKey string) *GeminiService {
 }
 
 func (g *GeminiService) SummarizeEmail(ctx context.Context, emailText string) (string, error) {
-	// Use gemini-2.5-pro as requested
+	// Use gemini-2.5-flash for fast summarization
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + g.ApiKey
+
+	// Vietnamese prompt for short, concise summary
+	prompt := fmt.Sprintf(`Tóm tắt email sau đây trong 1-2 câu ngắn gọn bằng tiếng Việt. 
+Chỉ nêu ý chính quan trọng nhất, giúp người đọc nắm bắt nhanh nội dung.
+Không cần giải thích chi tiết, không cần lời chào.
+
+Email:
+%s
+
+Tóm tắt:`, emailText)
 
 	payload := map[string]interface{}{
 		"contents": []map[string]interface{}{
-			{"parts": []map[string]string{{"text": emailText}}},
+			{"parts": []map[string]string{{"text": prompt}}},
 		},
 	}
 

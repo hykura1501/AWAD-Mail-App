@@ -631,6 +631,8 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 	if idx := strings.Index(from, "<"); idx > 0 {
 		fromName = strings.TrimSpace(from[:idx])
 	}
+	// Remove surrounding quotes from name (e.g., "John Doe" -> John Doe)
+	fromName = strings.Trim(fromName, `"`)
 
 	// Convert To header to array
 	toHeader := getHeader(msg.Payload.Headers, "To")
@@ -643,9 +645,22 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 	preview := body
 
 	if isHTML {
-		// Strip HTML tags
+		// Remove style blocks (CSS) - MUST be done before stripping tags
+		reStyle := regexp.MustCompile(`(?i)<style[^>]*>[\s\S]*?</style>`)
+		preview = reStyle.ReplaceAllString(preview, " ")
+		
+		// Remove script blocks
+		reScript := regexp.MustCompile(`(?i)<script[^>]*>[\s\S]*?</script>`)
+		preview = reScript.ReplaceAllString(preview, " ")
+		
+		// Remove head block (contains meta, title, styles)
+		reHead := regexp.MustCompile(`(?i)<head[^>]*>[\s\S]*?</head>`)
+		preview = reHead.ReplaceAllString(preview, " ")
+		
+		// Strip remaining HTML tags
 		re := regexp.MustCompile(`<[^>]*>`)
 		preview = re.ReplaceAllString(preview, " ")
+		
 		// Unescape HTML entities (basic ones)
 		preview = strings.ReplaceAll(preview, "&nbsp;", " ")
 		preview = strings.ReplaceAll(preview, "&lt;", "<")

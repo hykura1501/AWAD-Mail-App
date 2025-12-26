@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config) {
+func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config, summaryHandler *emailDelivery.SummaryHandler) {
 	authHandler := delivery.NewAuthHandler(authUsecase)
 	emailHandler := emailDelivery.NewEmailHandler(emailUsecase)
 
@@ -52,6 +52,7 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			emails.PATCH("/:id/star", emailHandler.ToggleStar)
 			emails.PATCH("/:id/mailbox", emailHandler.MoveEmailToMailbox)
 			emails.POST("/:id/snooze", emailHandler.SnoozeEmail)
+			emails.POST("/:id/unsnooze", emailHandler.UnsnoozeEmail)
 			emails.POST("/send", emailHandler.SendEmail)
 			emails.POST("/:id/trash", emailHandler.TrashEmail)
 			emails.POST("/:id/archive", emailHandler.ArchiveEmail)
@@ -76,6 +77,7 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			kanban.PUT("/columns/:column_id", emailHandler.UpdateKanbanColumn)
 			kanban.DELETE("/columns/:column_id", emailHandler.DeleteKanbanColumn)
 			kanban.PUT("/columns/orders", emailHandler.UpdateKanbanColumnOrders)
+			kanban.POST("/summarize", summaryHandler.QueueSummaries) // Background AI summary generation
 		}
 	}
 }

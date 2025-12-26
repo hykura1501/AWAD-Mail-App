@@ -4,27 +4,44 @@ import (
 	"log"
 
 	authUsecase "ga03-backend/internal/auth/usecase"
-	emailUsecase "ga03-backend/internal/email/usecase"
+	emailDelivery "ga03-backend/internal/email/delivery"
+	emailRepo "ga03-backend/internal/email/repository"
+	emailUsecasePkg "ga03-backend/internal/email/usecase"
+	"ga03-backend/pkg/ai"
 	"ga03-backend/pkg/chroma"
 	"ga03-backend/pkg/config"
-	gemini "ga03-backend/pkg/gemini"
 	"ga03-backend/pkg/sse"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
-	authUsecase  authUsecase.AuthUsecase
-	emailUsecase emailUsecase.EmailUsecase
-	sseManager   *sse.Manager
-	config       *config.Config
+	authUsecase    authUsecase.AuthUsecase
+	emailUsecase   emailUsecasePkg.EmailUsecase
+	sseManager     *sse.Manager
+	config         *config.Config
+	summaryHandler *emailDelivery.SummaryHandler
 }
 
-func NewHandler(authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config) *Handler {
-	// Khởi tạo GeminiService từ API key trong config
-	geminiSvc := gemini.NewGeminiService(cfg.GeminiApiKey)
-	// Gán GeminiService vào emailUsecase qua interface
-	emailUsecase.SetGeminiService(geminiSvc)
+func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUsecase, sseManager *sse.Manager, cfg *config.Config, summaryRepo emailRepo.EmailSummaryRepository) *Handler {
+	// Initialize AI service with pluggable provider (Gemini/Ollama)
+	aiCfg := ai.Config{
+		Provider:      ai.ProviderType(cfg.AIProvider),
+		GeminiAPIKey:  cfg.GeminiApiKey,
+		OllamaBaseURL: cfg.OllamaBaseURL,
+		OllamaModel:   cfg.OllamaModel,
+	}
+	aiService, err := ai.NewSummarizerService(aiCfg)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize AI service: %v", err)
+	} else {
+		log.Printf("AI service initialized with provider: %s", cfg.AIProvider)
+	}
+
+	// Set AI service vào emailUsecase qua interface
+	if aiService != nil {
+		emailUc.SetGeminiService(aiService)
+	}
 
 	// Initialize Chroma client for vector search
 	if cfg.ChromaAPIKey != "" {
@@ -32,20 +49,33 @@ func NewHandler(authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.E
 		if err != nil {
 			log.Printf("Warning: Failed to initialize Chroma client: %v. Semantic search will not be available.", err)
 		} else {
-			emailUsecase.SetVectorSearchService(chromaClient)
+			emailUc.SetVectorSearchService(chromaClient)
 			log.Println("Chroma client initialized successfully")
 		}
 	} else {
 		log.Println("Warning: CHROMA_API_KEY not set. Semantic search will not be available.")
 	}
 
+	// Initialize SummaryWorkerService for background AI summaries
+	summaryWorker := emailUsecasePkg.NewSummaryWorkerService(summaryRepo, sseManager, 3)
+	if aiService != nil {
+		summaryWorker.SetGeminiService(aiService)
+	}
+	summaryWorker.Start()
+	log.Println("Summary worker service started")
+
+	// Create SummaryHandler
+	summaryHandler := emailDelivery.NewSummaryHandler(summaryWorker, emailUc)
+
 	return &Handler{
-		authUsecase:  authUsecase,
-		emailUsecase: emailUsecase,
-		sseManager:   sseManager,
-		config:       cfg,
+		authUsecase:    authUc,
+		emailUsecase:   emailUc,
+		sseManager:     sseManager,
+		config:         cfg,
+		summaryHandler: summaryHandler,
 	}
 }
+
 
 func (h *Handler) Start(addr string) error {
 	r := gin.Default()
@@ -73,7 +103,7 @@ func (h *Handler) Start(addr string) error {
 	})
 
 	// Setup routes
-	SetupRoutes(r, h.authUsecase, h.emailUsecase, h.sseManager, h.config)
+	SetupRoutes(r, h.authUsecase, h.emailUsecase, h.sseManager, h.config, h.summaryHandler)
 
 	return r.Run(addr)
 }

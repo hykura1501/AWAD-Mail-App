@@ -16,7 +16,7 @@ const DEFAULT_COLUMNS: Array<{
   { column_id: "inbox", name: "Inbox", isDefault: true, gmail_label_id: "INBOX", remove_label_ids: ["INBOX"] },
   { column_id: "todo", name: "To Do", isDefault: true, gmail_label_id: "IMPORTANT", remove_label_ids: ["IMPORTANT"] },
   { column_id: "done", name: "Done", isDefault: true, gmail_label_id: "STARRED", remove_label_ids: ["STARRED"] },
-  { column_id: "snoozed", name: "Snoozed", isDefault: true }, // Managed locally, no Gmail label
+  // Note: "snoozed" is no longer a configurable column - it's managed via Snooze Drawer
 ];
 
 interface KanbanSettingsProps {
@@ -78,10 +78,10 @@ export default function KanbanSettings({
       }
     }
     
-    // Sort by order field
+    // Sort by order field, then filter out snoozed (it's now in drawer, not configurable)
     result.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     
-    return result;
+    return result.filter(col => col.column_id !== 'snoozed');
   }, [apiColumns]);
 
   // Get set of labels already used by other columns

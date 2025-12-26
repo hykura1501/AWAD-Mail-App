@@ -25,6 +25,7 @@ type EmailUsecase interface {
 	SummarizeEmail(ctx context.Context, emailID string) (string, error)
 	MoveEmailToMailbox(userID, emailID, mailboxID, sourceColumnID string) error
 	SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error
+	UnsnoozeEmail(userID, emailID string) (targetColumn string, err error)
 	FuzzySearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
 	SemanticSearch(userID, query string, limit, offset int) ([]*emaildomain.Email, int, error)
 	GetSearchSuggestions(userID, query string, limit int) ([]string, error)

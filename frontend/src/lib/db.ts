@@ -126,3 +126,45 @@ export const getLocalSuggestions = async (query: string, limit: number = 5): Pro
     return [];
   }
 };
+
+// Kanban column cache functions
+const KANBAN_CACHE_PREFIX = "kanban-column-";
+
+export const saveKanbanColumnToCache = async (columnId: string, emails: any[]) => {
+  const key = `${KANBAN_CACHE_PREFIX}${columnId}`;
+  await saveToCache(key, { emails, cachedAt: Date.now() });
+};
+
+export const getKanbanColumnFromCache = async (columnId: string): Promise<any[] | null> => {
+  const key = `${KANBAN_CACHE_PREFIX}${columnId}`;
+  const cached = await getFromCache(key);
+  if (cached?.emails) {
+    return cached.emails;
+  }
+  return null;
+};
+
+export const clearKanbanCache = async () => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+    
+    return new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => {
+        const entries = request.result || [];
+        for (const entry of entries) {
+          if (entry.key?.startsWith(KANBAN_CACHE_PREFIX)) {
+            store.delete(entry.key);
+          }
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error("Error clearing kanban cache:", error);
+  }
+};

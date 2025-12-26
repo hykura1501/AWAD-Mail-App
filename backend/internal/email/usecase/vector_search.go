@@ -148,6 +148,7 @@ func (u *emailUsecase) UpsertEmailEmbedding(ctx context.Context, userID, emailID
 
 // GetSearchSuggestions returns suggestions based on sender names and full subjects from inbox
 // This is used for auto-complete, NOT semantic search
+// OPTIMIZED: Uses in-memory cache instead of Gmail API calls for fast response
 // Returns full subject or sender name if it contains ANY word from the query
 func (u *emailUsecase) GetSearchSuggestions(userID, query string, limit int) ([]string, error) {
 	query = strings.TrimSpace(query)
@@ -162,15 +163,16 @@ func (u *emailUsecase) GetSearchSuggestions(userID, query string, limit int) ([]
 		limit = 10 // Cap at 10 suggestions
 	}
 
-	// Get emails from inbox to extract suggestions
-	// Fetch more emails to have better variety of suggestions
-	emails, _, err := u.GetEmailsByMailbox(userID, "INBOX", 50, 0, "")
-	if err != nil {
-		return []string{}, fmt.Errorf("failed to get inbox emails: %w", err)
-	}
+	// OPTIMIZED: Use in-memory cache instead of Gmail API
+	u.suggestionCacheMu.RLock()
+	userCache, exists := u.suggestionCache[userID]
+	u.suggestionCacheMu.RUnlock()
 
-	suggestions := make([]string, 0)
-	suggestionSet := make(map[string]bool) // Track suggestions to avoid duplicates
+	if !exists || len(userCache) == 0 {
+		// Cache empty - return empty suggestions
+		// Cache will be populated when user loads emails
+		return []string{}, nil
+	}
 
 	// Split query into words (remove empty strings from multiple spaces)
 	queryWords := strings.Fields(query)
@@ -195,34 +197,18 @@ func (u *emailUsecase) GetSearchSuggestions(userID, query string, limit int) ([]
 		return false
 	}
 
-	// Extract suggestions from emails
-	for _, email := range emails {
-		// Check sender name - return full sender name if it contains ANY query word
-		if email.FromName != "" && !suggestionSet[email.FromName] {
-			if containsAnyWord(email.FromName, queryWordsLower) {
-				suggestions = append(suggestions, email.FromName)
-				suggestionSet[email.FromName] = true
-				if len(suggestions) >= limit {
-					break
-				}
+	// Search through cache for matching suggestions
+	suggestions := make([]string, 0, limit)
+	u.suggestionCacheMu.RLock()
+	for suggestion := range userCache {
+		if containsAnyWord(suggestion, queryWordsLower) {
+			suggestions = append(suggestions, suggestion)
+			if len(suggestions) >= limit {
+				break
 			}
-		}
-
-		// Check subject - return full subject if it contains ANY query word
-		if email.Subject != "" && !suggestionSet[email.Subject] {
-			if containsAnyWord(email.Subject, queryWordsLower) {
-				suggestions = append(suggestions, email.Subject)
-				suggestionSet[email.Subject] = true
-				if len(suggestions) >= limit {
-					break
-				}
-			}
-		}
-
-		if len(suggestions) >= limit {
-			break
 		}
 	}
+	u.suggestionCacheMu.RUnlock()
 
 	return suggestions, nil
 }
@@ -230,8 +216,16 @@ func (u *emailUsecase) GetSearchSuggestions(userID, query string, limit int) ([]
 // syncEmailToVectorDB syncs a single email to vector database asynchronously
 // This is called after fetching emails to ensure they are indexed for semantic search
 // Uses job worker pattern to process sync jobs with controlled concurrency
+// ALSO populates the suggestion cache for fast auto-suggest
 func (u *emailUsecase) syncEmailToVectorDB(userID string, email *emaildomain.Email) {
-	if email == nil || u.vectorSearchService == nil {
+	if email == nil {
+		return
+	}
+
+	// Always populate suggestion cache (even if vector search is disabled)
+	u.addToSuggestionCache(userID, email.FromName, email.Subject)
+
+	if u.vectorSearchService == nil {
 		return
 	}
 
@@ -257,3 +251,39 @@ func (u *emailUsecase) syncEmailToVectorDB(userID string, email *emaildomain.Ema
 		fmt.Printf("Sync job queue full, skipping email %s (will retry later)\n", email.ID)
 	}
 }
+
+// addToSuggestionCache adds FromName and Subject to the suggestion cache
+// This is called when emails are fetched/synced to build up the cache
+func (u *emailUsecase) addToSuggestionCache(userID, fromName, subject string) {
+	u.suggestionCacheMu.Lock()
+	defer u.suggestionCacheMu.Unlock()
+
+	if u.suggestionCache[userID] == nil {
+		u.suggestionCache[userID] = make(map[string]struct{})
+	}
+
+	// Add FromName if not empty and not too long
+	if fromName != "" && len(fromName) <= 100 {
+		u.suggestionCache[userID][fromName] = struct{}{}
+	}
+
+	// Add Subject if not empty and not too long
+	if subject != "" && len(subject) <= 200 {
+		u.suggestionCache[userID][subject] = struct{}{}
+	}
+
+	// Limit cache size per user to prevent memory issues
+	const maxCacheSize = 1000
+	if len(u.suggestionCache[userID]) > maxCacheSize {
+		// Remove oldest entries (since map iteration is random, this is approximate)
+		count := 0
+		for key := range u.suggestionCache[userID] {
+			if count >= maxCacheSize/2 {
+				break
+			}
+			delete(u.suggestionCache[userID], key)
+			count++
+		}
+	}
+}
+

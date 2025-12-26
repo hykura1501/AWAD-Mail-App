@@ -247,6 +247,30 @@ func (h *EmailHandler) SnoozeEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "email snoozed", "snooze_until": snoozeTime})
 }
 
+// POST /emails/:id/unsnooze
+func (h *EmailHandler) UnsnoozeEmail(c *gin.Context) {
+	id := c.Param("id")
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	userID := userData.ID
+
+	targetColumn, err := h.emailUsecase.UnsnoozeEmail(userID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "email unsnoozed", "target_column": targetColumn})
+}
+
 func NewEmailHandler(emailUsecase usecase.EmailUsecase) *EmailHandler {
 	return &EmailHandler{
 		emailUsecase: emailUsecase,

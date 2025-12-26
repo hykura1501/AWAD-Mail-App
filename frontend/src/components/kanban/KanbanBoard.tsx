@@ -50,6 +50,23 @@ function getCleanPreview(email: Email): string {
   return cleaned.slice(0, 100);
 }
 
+// Helper to get clean sender name (remove quotes and email address)
+function getSenderName(email: Email): string {
+  // Use from_name if available
+  if (email.from_name) {
+    return email.from_name.replace(/^["']|["']$/g, '').trim();
+  }
+  // Otherwise extract from 'from' field
+  const from = email.from || "";
+  // Match pattern: "Name" <email> or Name <email>
+  const match = from.match(/^["']?([^"'<]+)["']?\s*<.*>$/);
+  if (match) {
+    return match[1].trim();
+  }
+  // If no match, just remove quotes and return
+  return from.replace(/^["']|["']$/g, '').trim();
+}
+
 function DraggableEmailCard({ 
   email, 
   renderCardActions, 
@@ -87,8 +104,8 @@ function DraggableEmailCard({
       onClick={() => onClick?.(email.id)}
     >
       <div className="flex justify-between items-start gap-2">
-        <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate flex-1">
-          {email.from}
+        <div className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate flex-1">
+          {getSenderName(email)}
         </div>
         <div className="text-[10px] text-gray-400 font-medium whitespace-nowrap shrink-0">
           {new Date(email.received_at).toLocaleDateString()}
@@ -114,7 +131,7 @@ function DraggableEmailCard({
                 <span className="text-[10px] text-gray-500 dark:text-gray-400">Đang phân tích...</span>
               </div>
             ) : (
-              <div className="text-[10px] text-gray-700 dark:text-gray-300 line-clamp-3 leading-relaxed">
+              <div className="text-xs text-gray-700 dark:text-gray-300 line-clamp-3 leading-relaxed">
                 {summary}
               </div>
             )}
@@ -147,14 +164,37 @@ function DraggableEmailCard({
   );
 }
 
+// Skeleton card for loading state
+function SkeletonCard() {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border p-4 bg-white dark:bg-[#1A1D21] border-gray-100 dark:border-gray-800">
+      <div className="flex justify-between items-start gap-2">
+        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-24" />
+        <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-12" />
+      </div>
+      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
+      <div className="space-y-1">
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded animate-pulse w-full" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded animate-pulse w-2/3" />
+      </div>
+      <div className="mt-2 pt-2 border-t border-gray-50 dark:border-gray-800/50 flex gap-2">
+        <div className="h-6 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse flex-1" />
+        <div className="h-6 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse w-16" />
+      </div>
+    </div>
+  );
+}
+
 function DroppableColumn({ 
   column, 
   children,
-  onPageChange
+  onPageChange,
+  isLoading = false
 }: { 
   column: KanbanColumn; 
   children: React.ReactNode;
   onPageChange?: (colId: string, dir: 1 | -1) => void;
+  isLoading?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: column.id,
@@ -221,9 +261,18 @@ function DroppableColumn({
       </div>
 
       {/* Cards Container */}
-      <div className="flex-1 overflow-y-auto px-3 pb-3 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto px-3 pb-3 custom-scrollbar scrollbar-thin">
         <div className="flex flex-col gap-3 min-h-[150px]">
-          {children}
+          {isLoading && column.emails.length === 0 ? (
+            // Show skeleton cards when loading
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : (
+            children
+          )}
         </div>
       </div>
     </div>
@@ -290,20 +339,12 @@ export default function KanbanBoard({
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 w-full h-full p-3 bg-white dark:bg-[#111418] relative">
-        {/* Global Loading Overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 bg-white/80 dark:bg-[#111418]/80 backdrop-blur-sm z-50 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-base font-medium text-gray-700 dark:text-gray-300">Đang tải dữ liệu...</span>
-            </div>
-          </div>
-        )}
         {columns.map((col) => (
           <DroppableColumn 
             key={col.id} 
             column={col} 
             onPageChange={onPageChange}
+            isLoading={isLoading}
           >
             {col.emails.map((email) => (
               <DraggableEmailCard
@@ -333,7 +374,7 @@ export default function KanbanBoard({
             ">
               <div className="flex justify-between items-start gap-2 mb-2">
                 <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
-                  {activeEmail.from}
+                  {getSenderName(activeEmail)}
                 </div>
               </div>
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">

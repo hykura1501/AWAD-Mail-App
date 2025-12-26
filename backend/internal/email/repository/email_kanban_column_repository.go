@@ -80,3 +80,70 @@ func (r *emailKanbanColumnRepository) RemoveEmailColumn(userID, emailID string) 
 func (r *emailKanbanColumnRepository) RemoveEmailColumnMapping(userID, emailID, columnID string) error {
 	return r.db.Where("user_id = ? AND email_id = ? AND column_id = ?", userID, emailID, columnID).Delete(&emaildomain.EmailKanbanColumn{}).Error
 }
+
+// SnoozeEmailToColumn moves email to snoozed column and saves previous column
+func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previousColumnID string) error {
+	var mapping emaildomain.EmailKanbanColumn
+	
+	// Try to find existing mapping
+	err := r.db.Where("user_id = ? AND email_id = ?", userID, emailID).First(&mapping).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Create new mapping
+		mapping = emaildomain.EmailKanbanColumn{
+			ID:               uuid.New().String(),
+			UserID:           userID,
+			EmailID:          emailID,
+			ColumnID:         "snoozed",
+			PreviousColumnID: previousColumnID,
+		}
+		return r.db.Create(&mapping).Error
+	}
+	
+	// Update existing mapping - save current column as previous, then set to snoozed
+	mapping.PreviousColumnID = previousColumnID
+	mapping.ColumnID = "snoozed"
+	return r.db.Save(&mapping).Error
+}
+
+// GetPreviousColumn gets the previous column ID for a snoozed email
+func (r *emailKanbanColumnRepository) GetPreviousColumn(userID, emailID string) (string, error) {
+	var mapping emaildomain.EmailKanbanColumn
+	err := r.db.Where("user_id = ? AND email_id = ?", userID, emailID).First(&mapping).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "inbox", nil // Default to inbox if no previous column
+		}
+		return "", err
+	}
+	if mapping.PreviousColumnID == "" {
+		return "inbox", nil // Default to inbox if previous column is empty
+	}
+	return mapping.PreviousColumnID, nil
+}
+
+// GetAllSnoozedMappings gets all email mappings in snoozed column (for auto-unsnooze)
+func (r *emailKanbanColumnRepository) GetAllSnoozedMappings() ([]SnoozedEmailMapping, error) {
+	var mappings []emaildomain.EmailKanbanColumn
+	err := r.db.Where("column_id = ?", "snoozed").Find(&mappings).Error
+	if err != nil {
+		return nil, err
+	}
+	
+	result := make([]SnoozedEmailMapping, len(mappings))
+	for i, m := range mappings {
+		prevCol := m.PreviousColumnID
+		if prevCol == "" {
+			prevCol = "inbox"
+		}
+		result[i] = SnoozedEmailMapping{
+			UserID:           m.UserID,
+			EmailID:          m.EmailID,
+			PreviousColumnID: prevCol,
+		}
+	}
+	return result, nil
+}

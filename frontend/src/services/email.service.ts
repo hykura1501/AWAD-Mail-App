@@ -41,6 +41,12 @@ export const emailService = {
       snooze_until: snoozeUntil.toISOString(),
     });
   },
+  unsnoozeEmail: async (emailId: string): Promise<{ targetColumn: string }> => {
+    const response = await apiClient.post<{ message: string; target_column: string }>(
+      `/emails/${emailId}/unsnooze`
+    );
+    return { targetColumn: response.data.target_column };
+  },
   getAllMailboxes: async (): Promise<Mailbox[]> => {
     const response = await apiClient.get<{ mailboxes: Mailbox[] }>(
       "/emails/mailboxes"
@@ -196,5 +202,17 @@ export const emailService = {
     orders: Record<string, number>
   ): Promise<void> => {
     await apiClient.put("/kanban/columns/orders", { orders });
+  },
+
+  // Queue emails for background AI summary generation
+  // Returns cached summaries immediately; new summaries arrive via SSE "summary_update"
+  queueSummaries: async (
+    emailIds: string[]
+  ): Promise<{ summaries: Record<string, string>; queued: number }> => {
+    const response = await apiClient.post<{
+      summaries: Record<string, string>;
+      queued: number;
+    }>("/kanban/summarize", { email_ids: emailIds });
+    return response.data;
   },
 };
