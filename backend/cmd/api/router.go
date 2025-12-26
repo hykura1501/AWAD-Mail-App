@@ -7,6 +7,7 @@ import (
 	emailUsecase "ga03-backend/internal/email/usecase"
 	"ga03-backend/pkg/config"
 	"ga03-backend/pkg/sse"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +18,11 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 
 	api := r.Group("/api")
 	{
+		// Health check (no auth required)
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		})
+
 		// SSE endpoint
 		api.GET("/events", delivery.AuthMiddleware(authUsecase), func(c *gin.Context) {
 			userID := c.GetString("userID")
