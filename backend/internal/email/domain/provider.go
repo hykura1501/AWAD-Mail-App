@@ -19,6 +19,7 @@ type MailProvider interface {
 	SendEmail(ctx context.Context, accessToken, refreshToken, fromName, fromEmail, to, cc, bcc, subject, body string, files []*multipart.FileHeader, onTokenRefresh TokenUpdateFunc) error
 	TrashEmail(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) error
 	ArchiveEmail(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) error
+	PermanentDeleteEmail(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) error
 	MarkAsRead(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error
 	MarkAsUnread(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error
 	ToggleStar(ctx context.Context, accessToken, refreshToken, messageID string, onTokenRefresh TokenUpdateFunc) error

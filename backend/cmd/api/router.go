@@ -64,6 +64,8 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			emails.POST("/:id/archive", emailHandler.ArchiveEmail)
 			emails.POST("/watch", emailHandler.WatchMailbox)
 			emails.GET("/search", emailHandler.FuzzySearch)
+			emails.POST("/bulk", emailHandler.BulkOperation)
+			emails.DELETE("/:id/permanent", emailHandler.PermanentDeleteEmail)
 		}
 
 		// Search routes (protected)

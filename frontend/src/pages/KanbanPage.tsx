@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
@@ -20,6 +20,12 @@ import KanbanSettings from "@/components/kanban/KanbanSettings";
 import SnoozedDrawer from "@/components/kanban/SnoozedDrawer";
 import { Settings } from "lucide-react";
 import { getKanbanColumnFromCache, saveKanbanColumnToCache } from "@/lib/db";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
@@ -91,6 +97,32 @@ export default function KanbanPage() {
 
   // Snoozed drawer state
   const [isSnoozedDrawerOpen, setIsSnoozedDrawerOpen] = useState(false);
+
+  // Account menu and shortcuts dialog state
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close account menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(event.target as Node)) {
+        setIsAccountMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const shortcuts = [
+    { key: "j / ↓", action: "Email tiếp theo" },
+    { key: "k / ↑", action: "Email trước" },
+    { key: "Enter", action: "Mở email" },
+    { key: "Delete", action: "Xóa email" },
+    { key: "s", action: "Gắn/bỏ sao" },
+    { key: "r", action: "Đã đọc/chưa đọc" },
+    { key: "Esc", action: "Bỏ chọn" },
+  ];
 
   // Kanban columns configuration (loaded eagerly, no caching)
   const [kanbanColumnConfigs, setKanbanColumnConfigs] = useState<
@@ -709,27 +741,98 @@ export default function KanbanPage() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-            title="Kanban Settings"
-          >
-            <Settings className="h-5 w-5 text-gray-700 dark:text-gray-300" />
-          </button>
           <KanbanToggle isKanban={true} onToggle={() => navigate("/inbox")} />
+          
+          {/* Account Menu */}
+          <div className="relative" ref={accountMenuRef}>
+            <button
+              onClick={() => setIsAccountMenuOpen(!isAccountMenuOpen)}
+              className="w-8 h-8 rounded-full overflow-hidden border-2 border-gray-200 dark:border-gray-600 hover:border-blue-400 transition-colors"
+            >
+              <img
+                src={user?.avatar_url || "https://lh3.googleusercontent.com/aida-public/AB6AXuDRNQSlv4je28jMHI0WjXZhE5xKv7aSQKNqKhtFzfV3noDp7AgOUk9Hz5vby11yRlctZmQJOUwfeApOcQV9Yt"}
+                alt="Avatar"
+                className="w-full h-full object-cover"
+              />
+            </button>
+            
+            {isAccountMenuOpen && (
+              <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-[#283039] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                <button
+                  onClick={toggleTheme}
+                  className="w-full px-3 py-2 text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 text-sm"
+                >
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
+                    {theme === "dark" ? "light_mode" : "dark_mode"}
+                  </span>
+                  <span>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowShortcuts(true);
+                    setIsAccountMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 text-sm"
+                >
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">keyboard</span>
+                  <span>Phím tắt</span>
+                </button>
+                <div className="h-px bg-gray-200 dark:bg-gray-700 mx-2"></div>
+                <button
+                  onClick={handleLogout}
+                  className="w-full px-3 py-2 text-left text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 text-sm"
+                >
+                  <span className="material-symbols-outlined text-lg">logout</span>
+                  <span>Đăng xuất</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Keyboard Shortcuts Dialog */}
+      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
+        <DialogContent className="max-w-[240px] p-4">
+          <DialogHeader className="pb-3">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <span className="material-symbols-outlined text-xl">keyboard</span>
+              Phím tắt
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {shortcuts.map((s) => (
+              <div key={s.key} className="flex justify-between items-center text-sm">
+                <span className="text-gray-600 dark:text-gray-400">{s.action}</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
+                  {s.key}
+                </kbd>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Filter Bar */}
-      <div className="hidden lg:block">
-        <KanbanFilters
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          filters={filters}
-          onFilterChange={setFilters}
-          snoozedCount={kanbanEmails.snoozed?.length || 0}
-          onSnoozedClick={() => setIsSnoozedDrawerOpen(true)}
-        />
+      <div className="hidden lg:flex items-center gap-2 pr-4 bg-white dark:bg-[#0f1724]">
+        <div className="flex-1">
+          <KanbanFilters
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            filters={filters}
+            onFilterChange={setFilters}
+            snoozedCount={kanbanEmails.snoozed?.length || 0}
+            onSnoozedClick={() => setIsSnoozedDrawerOpen(true)}
+          />
+        </div>
+        <button
+          onClick={() => setIsSettingsOpen(true)}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+          title="Kanban Settings"
+        >
+          <Settings className="h-4 w-4" />
+          <span className="hidden xl:inline">Cài đặt cột</span>
+        </button>
       </div>
 
       {/* Main Content */}

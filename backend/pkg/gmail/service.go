@@ -552,6 +552,26 @@ func (s *Service) ArchiveEmail(ctx context.Context, accessToken, refreshToken, e
 	return nil
 }
 
+// PermanentDeleteEmail permanently deletes an email (cannot be recovered)
+func (s *Service) PermanentDeleteEmail(ctx context.Context, accessToken, refreshToken, emailID string, onTokenRefresh TokenUpdateFunc) error {
+	log.Printf("[PermanentDeleteEmail] Attempting to delete email: %s", emailID)
+	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)
+	if err != nil {
+		log.Printf("[PermanentDeleteEmail] Failed to get Gmail service: %v", err)
+		return err
+	}
+
+	user := "me"
+	err = srv.Users.Messages.Delete(user, emailID).Do()
+	if err != nil {
+		log.Printf("[PermanentDeleteEmail] Failed to delete: %v", err)
+		return fmt.Errorf("unable to permanently delete message: %v", err)
+	}
+
+	log.Printf("[PermanentDeleteEmail] Successfully deleted email: %s", emailID)
+	return nil
+}
+
 // ModifyMessageLabels adds and/or removes labels from a message
 func (s *Service) ModifyMessageLabels(ctx context.Context, accessToken, refreshToken, messageID string, addLabelIDs, removeLabelIDs []string, onTokenRefresh TokenUpdateFunc) error {
 	srv, err := s.GetGmailService(ctx, accessToken, refreshToken, onTokenRefresh)

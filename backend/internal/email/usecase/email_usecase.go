@@ -675,6 +675,38 @@ func (u *emailUsecase) ArchiveEmail(userID, id string) error {
 	return u.mailProvider.ArchiveEmail(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 }
 
+// PermanentDeleteEmail permanently deletes an email (for emails in trash)
+func (u *emailUsecase) PermanentDeleteEmail(userID, id string) error {
+	user, err := u.userRepo.FindByID(userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	// IMAP Handler
+	if user.Provider == "imap" {
+		decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt password: %w", err)
+		}
+		return u.imapProvider.PermanentDeleteEmail(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
+	}
+
+	accessToken, refreshToken, err := u.getUserTokens(userID)
+	if err != nil {
+		return err
+	}
+
+	if accessToken == "" {
+		// Fallback to local storage - not supported for permanent delete
+		return nil
+	}
+
+	ctx := context.Background()
+	return u.mailProvider.PermanentDeleteEmail(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
+}
 func (u *emailUsecase) WatchMailbox(userID string) error {
 	accessToken, refreshToken, err := u.getUserTokens(userID)
 	if err != nil {

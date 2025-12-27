@@ -21,6 +21,7 @@ type EmailUsecase interface {
 	SendEmail(userID, to, cc, bcc, subject, body string, files []*multipart.FileHeader) error
 	TrashEmail(userID, id string) error
 	ArchiveEmail(userID, id string) error
+	PermanentDeleteEmail(userID, id string) error
 	WatchMailbox(userID string) error
 	SummarizeEmail(ctx context.Context, emailID string) (string, error)
 	MoveEmailToMailbox(userID, emailID, mailboxID, sourceColumnID string) error

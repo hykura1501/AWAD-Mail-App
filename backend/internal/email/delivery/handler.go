@@ -788,3 +788,116 @@ func (h *EmailHandler) GetSearchSuggestions(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
 }
+
+// POST /api/emails/bulk
+// BulkOperation handles bulk operations on multiple emails
+func (h *EmailHandler) BulkOperation(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	userID := userData.ID
+
+	var req emaildto.BulkOperationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(req.EmailIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email_ids cannot be empty"})
+		return
+	}
+
+	var successCount, failCount int
+	var lastError error
+
+	switch req.Action {
+	case "mark_read":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.MarkEmailAsRead(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "mark_unread":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.MarkEmailAsUnread(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "trash":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.TrashEmail(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "permanent_delete":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.PermanentDeleteEmail(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid action. Valid actions: mark_read, mark_unread, trash, permanent_delete"})
+		return
+	}
+
+	response := gin.H{
+		"success_count": successCount,
+		"fail_count":    failCount,
+		"total":         len(req.EmailIDs),
+	}
+
+	if lastError != nil && failCount > 0 {
+		response["last_error"] = lastError.Error()
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// DELETE /api/emails/:id/permanent
+// PermanentDeleteEmail permanently deletes an email (only works for emails in trash)
+func (h *EmailHandler) PermanentDeleteEmail(c *gin.Context) {
+	id := c.Param("id")
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	userID := userData.ID
+
+	if err := h.emailUsecase.PermanentDeleteEmail(userID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email permanently deleted"})
+}

@@ -73,12 +73,15 @@ export default function InboxPage() {
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
   const selectedEmailId = emailId || null;
+  // Search mode: "semantic" or "fuzzy"
+  const [searchMode, setSearchMode] = useState<"semantic" | "fuzzy">("semantic");
 
-  const handleSearch = (query: string) => {
+  const handleSearch = (query: string, mode: "semantic" | "fuzzy") => {
     const trimmed = query.trim();
     if (!trimmed) return;
-    // Set search query to show results in email list column
+    // Set search query and mode to show results in email list column
     setHeaderSearchQuery(trimmed);
+    setSearchMode(mode);
   };
 
   const handleClearSearch = () => {
@@ -362,6 +365,7 @@ export default function InboxPage() {
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
               searchQuery={headerSearchQuery}
+              searchMode={searchMode}
               onClearSearch={handleClearSearch}
             />
           </div>
@@ -427,6 +431,7 @@ export default function InboxPage() {
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
               searchQuery={headerSearchQuery}
+              searchMode={searchMode}
               onClearSearch={handleClearSearch}
             />
           </div>

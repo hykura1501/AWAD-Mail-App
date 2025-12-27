@@ -25,3 +25,8 @@ type SendEmailRequest struct {
 	Files   []*multipart.FileHeader `form:"files"`
 }
 
+// BulkOperationRequest for bulk email operations
+type BulkOperationRequest struct {
+	EmailIDs []string `json:"email_ids" binding:"required"`
+	Action   string   `json:"action" binding:"required"` // mark_read, mark_unread, trash, permanent_delete
+}

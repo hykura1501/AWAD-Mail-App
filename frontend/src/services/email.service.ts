@@ -125,6 +125,44 @@ export const emailService = {
     await apiClient.post(`/emails/${id}/archive`);
   },
 
+  // Permanently delete a single email (for emails in trash)
+  permanentDeleteEmail: async (id: string): Promise<void> => {
+    await apiClient.delete(`/emails/${id}/permanent`);
+  },
+
+  // Bulk operations
+  bulkMarkAsRead: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "mark_read" }
+    );
+    return response.data;
+  },
+
+  bulkMarkAsUnread: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "mark_unread" }
+    );
+    return response.data;
+  },
+
+  bulkTrash: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "trash" }
+    );
+    return response.data;
+  },
+
+  bulkPermanentDelete: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "permanent_delete" }
+    );
+    return response.data;
+  },
+
   watchMailbox: async (): Promise<void> => {
     await apiClient.post("/emails/watch");
   },
