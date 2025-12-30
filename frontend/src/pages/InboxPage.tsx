@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
+import { emailService } from "@/services/email.service";
 import { getAccessToken } from "@/lib/api-client";
 import type { Email } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
@@ -90,70 +91,57 @@ export default function InboxPage() {
 
   useEffect(() => {
     if (user) {
-      // Start watching for email updates
-      // Watch mailbox for updates
-      // Note: watchMailbox is triggered elsewhere (e.g., login), so we only manage SSE here.
+      // Start watching for email updates (register Gmail push notifications)
+      emailService.watchMailbox().catch(console.error);
 
       // Connect to SSE
       const token = getAccessToken();
-      const eventSource = new EventSource(
-        `${API_BASE_URL}/events?token=${token}`,
-        {
-          withCredentials: true,
-        }
-      );
+      const sseUrl = `${API_BASE_URL}/events?token=${token}`;
+      console.log("[SSE] Connecting to:", sseUrl);
+      
+      const eventSource = new EventSource(sseUrl, { withCredentials: true });
 
-      let lastMutationTime = 0;
+      // Handle open event
+      eventSource.onopen = () => {
+        console.log("[SSE] Connection opened");
+      };
 
+      // Handle all messages (no event type specified)
       eventSource.onmessage = (event) => {
+        console.log("[SSE] Raw message received:", event.data);
         try {
           const data = JSON.parse(event.data);
+          console.log("[SSE] Parsed data:", data);
+          
           if (data.type === "email_update") {
-            console.log("Received email update:", data.payload);
-
-            // Ignore SSE updates for 3 seconds after user actions to prevent conflicts
-            const timeSinceLastMutation = Date.now() - lastMutationTime;
-            if (timeSinceLastMutation < 3000) {
-              console.log("Ignoring SSE update - recent user action");
-              return;
-            }
-
-            // Only invalidate for new emails or external changes
-            queryClient.invalidateQueries({
-              queryKey: ["emails"],
-              refetchType: "none",
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["mailboxes"],
-              refetchType: "none",
-            });
+            console.log("[SSE] Email update detected, refetching...");
+            
+            // Force immediate refetch of all email queries
+            queryClient.refetchQueries({ queryKey: ["emails"] });
+            queryClient.refetchQueries({ queryKey: ["mailboxes"] });
+            
+            console.log("[SSE] Refetch triggered");
           }
         } catch (error) {
-          console.error("Error parsing SSE message:", error);
+          console.error("[SSE] Error parsing message:", error);
         }
       };
 
-      // Track mutation time to debounce SSE updates
-      const unsubscribe = queryClient.getMutationCache().subscribe((event) => {
-        if (
-          event?.type === "updated" &&
-          event.mutation.state.status === "pending"
-        ) {
-          lastMutationTime = Date.now();
-        }
+      // Also listen for named events just in case
+      eventSource.addEventListener("email_update", (event) => {
+        console.log("[SSE] Named email_update event:", event);
       });
 
       eventSource.onerror = (error) => {
-        console.error("SSE error:", error);
-        eventSource.close();
+        console.error("[SSE] Error:", error, "readyState:", eventSource.readyState);
       };
 
       return () => {
+        console.log("[SSE] Closing connection");
         eventSource.close();
-        unsubscribe();
       };
     }
-      }, [user, queryClient]);
+  }, [user, queryClient]);
 
   const logoutMutation = useMutation({
     mutationFn: authService.logout,

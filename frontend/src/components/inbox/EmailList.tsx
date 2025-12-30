@@ -76,8 +76,16 @@ export default function EmailList({
   useEffect(() => {
     if (searchQuery) {
       setCurrentPage(1);
+      setCachedData(null); // Clear cache when starting a search
     }
   }, [searchQuery]);
+
+  // Clear cache when switching from search to mailbox
+  useEffect(() => {
+    if (!isExternalSearch) {
+      setCachedData(null);
+    }
+  }, [isExternalSearch]);
 
   useEffect(() => {
     if (mailboxId || isExternalSearch) {
@@ -137,7 +145,8 @@ export default function EmailList({
     // Only run mailbox query when NOT searching, and only run search query when searching
     // This prevents race conditions where both queries fire simultaneously
     enabled: isExternalSearch ? !!searchQuery : !!mailboxId,
-    placeholderData: cachedData ?? undefined,
+    // Don't use placeholder data during search - show loading skeleton instead
+    placeholderData: isExternalSearch ? undefined : (cachedData ?? undefined),
   });
 
   const emails = data?.emails || [];
@@ -158,15 +167,18 @@ export default function EmailList({
       result = result.filter(email => email.attachments && email.attachments.length > 0);
     }
     
-    // Sort by date
-    result.sort((a, b) => {
-      const dateA = new Date(a.received_at).getTime();
-      const dateB = new Date(b.received_at).getTime();
-      return sortOrder === "newest" ? dateB - dateA : dateA - dateB;
-    });
+    // Only sort by date when NOT in search mode
+    // When searching, preserve the relevance order from backend
+    if (!isExternalSearch) {
+      result.sort((a, b) => {
+        const dateA = new Date(a.received_at).getTime();
+        const dateB = new Date(b.received_at).getTime();
+        return sortOrder === "newest" ? dateB - dateA : dateA - dateB;
+      });
+    }
     
     return result;
-  }, [emails, showUnreadOnly, showWithAttachmentsOnly, sortOrder]);
+  }, [emails, showUnreadOnly, showWithAttachmentsOnly, sortOrder, isExternalSearch]);
 
   // Reset state when mailbox changes
   const prevMailboxIdRef = useRef(mailboxId);
@@ -473,7 +485,12 @@ export default function EmailList({
     );
   }
 
-  if (isLoading || (isFetching && !data)) {
+  // Show loading skeleton when:
+  // 1. Initial loading
+  // 2. Fetching during search mode (to avoid showing stale/old data)
+  const showLoadingSkeleton = isLoading || (isFetching && (!data || isExternalSearch));
+
+  if (showLoadingSkeleton) {
     return (
       <div className="w-full h-full bg-white dark:bg-[#111418]">
         <div className="p-4 space-y-2">
