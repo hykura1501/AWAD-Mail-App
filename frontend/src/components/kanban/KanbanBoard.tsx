@@ -120,19 +120,52 @@ function DraggableEmailCard({
         {getCleanPreview(email)}
       </div>
 
-      {/* Summary Display (when loaded) */}
+      {/* Summary Display (when loaded) - with formatted action items */}
       {(summary || summaryLoading) && (
         <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-          <div className="flex items-start gap-2 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
-            <Sparkles className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" />
+          <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-blue-500 shrink-0" />
+              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">AI Summary</span>
+            </div>
             {summaryLoading ? (
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-[10px] text-gray-500 dark:text-gray-400">Đang phân tích...</span>
               </div>
             ) : (
-              <div className="text-xs text-gray-700 dark:text-gray-300 line-clamp-3 leading-relaxed">
-                {summary}
+              <div className="space-y-1">
+                {summary?.split('\n').map((line, idx) => {
+                  // Highlight action items with colored badges (compact version)
+                  if (line.includes('📌 Cần làm:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-orange-100 dark:bg-orange-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-orange-600 dark:text-orange-400 font-semibold">📌</span>
+                        <span className="text-orange-700 dark:text-orange-300 truncate">{line.replace('📌 Cần làm:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  if (line.includes('📅 Deadline:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-red-600 dark:text-red-400 font-semibold">📅</span>
+                        <span className="text-red-700 dark:text-red-300 truncate">{line.replace('📅 Deadline:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  if (line.includes('💡 Lưu ý:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-yellow-600 dark:text-yellow-500 font-semibold">💡</span>
+                        <span className="text-yellow-700 dark:text-yellow-300 truncate">{line.replace('💡 Lưu ý:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  // Regular summary text
+                  return line.trim() ? (
+                    <p key={idx} className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2">{line}</p>
+                  ) : null;
+                })}
               </div>
             )}
           </div>

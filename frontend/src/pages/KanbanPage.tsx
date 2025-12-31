@@ -292,6 +292,11 @@ export default function KanbanPage() {
     }
   };
 
+  // Track summary states (declared here before any useEffect that uses it)
+  const [summaryStates, setSummaryStates] = useState<
+    Record<string, { summary: string; loading: boolean }>
+  >({});
+
   // Initial load: fetch columns + mailboxes, rồi fetch emails cho tất cả cột (default + custom)
   // OPTIMIZED: Load columns in batches to avoid overwhelming the backend
   useEffect(() => {
@@ -360,10 +365,20 @@ export default function KanbanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+
   // Load summary whenever detailEmailId changes
+  // OPTIMIZATION: Check cache first to avoid redundant AI calls
   useEffect(() => {
     if (!detailEmailId) {
       setSummary("");
+      return;
+    }
+
+    // Check if summary is already cached in summaryStates
+    const cachedSummary = summaryStates[detailEmailId]?.summary;
+    if (cachedSummary) {
+      setSummary(cachedSummary);
+      setIsSummaryLoading(false);
       return;
     }
 
@@ -374,6 +389,11 @@ export default function KanbanPage() {
         const s = await emailService.getEmailSummary(detailEmailId);
         if (!cancelled) {
           setSummary(s);
+          // Also update summaryStates cache for consistency
+          setSummaryStates((prev) => ({
+            ...prev,
+            [detailEmailId]: { summary: s, loading: false },
+          }));
         }
       } catch (error) {
         console.error("Error fetching summary:", error);
@@ -392,17 +412,14 @@ export default function KanbanPage() {
     return () => {
       cancelled = true;
     };
-  }, [detailEmailId]);
+  }, [detailEmailId, summaryStates]);
 
   // Track which emails have requested summaries
   const [requestedSummaries, setRequestedSummaries] = useState<Set<string>>(
     new Set()
   );
 
-  // Track summary states
-  const [summaryStates, setSummaryStates] = useState<
-    Record<string, { summary: string; loading: boolean }>
-  >({});
+
 
   // Handle summary request
   const handleRequestSummary = async (emailId: string) => {
@@ -1223,8 +1240,42 @@ export default function KanbanPage() {
                       <span>Đang phân tích nội dung email...</span>
                     </div>
                   ) : (
-                    <div className="text-sm leading-relaxed whitespace-pre-line text-gray-800 dark:text-gray-200">
-                      {summary || "Không thể tạo tóm tắt cho email này."}
+                    <div className="text-sm leading-relaxed space-y-2">
+                      {summary ? (
+                        summary.split('\n').map((line, idx) => {
+                          // Highlight action items with colored badges
+                          if (line.includes('📌 Cần làm:')) {
+                            return (
+                              <div key={idx} className="flex items-start gap-2 bg-orange-50 dark:bg-orange-900/30 p-2 rounded-lg border border-orange-200 dark:border-orange-800">
+                                <span className="text-orange-500 dark:text-orange-400 font-semibold whitespace-nowrap">📌 Cần làm:</span>
+                                <span className="text-orange-700 dark:text-orange-300">{line.replace('📌 Cần làm:', '').trim()}</span>
+                              </div>
+                            );
+                          }
+                          if (line.includes('📅 Deadline:')) {
+                            return (
+                              <div key={idx} className="flex items-start gap-2 bg-red-50 dark:bg-red-900/30 p-2 rounded-lg border border-red-200 dark:border-red-800">
+                                <span className="text-red-500 dark:text-red-400 font-semibold whitespace-nowrap">📅 Deadline:</span>
+                                <span className="text-red-700 dark:text-red-300">{line.replace('📅 Deadline:', '').trim()}</span>
+                              </div>
+                            );
+                          }
+                          if (line.includes('💡 Lưu ý:')) {
+                            return (
+                              <div key={idx} className="flex items-start gap-2 bg-yellow-50 dark:bg-yellow-900/30 p-2 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                                <span className="text-yellow-600 dark:text-yellow-400 font-semibold whitespace-nowrap">💡 Lưu ý:</span>
+                                <span className="text-yellow-700 dark:text-yellow-300">{line.replace('💡 Lưu ý:', '').trim()}</span>
+                              </div>
+                            );
+                          }
+                          // Regular summary text
+                          return line.trim() ? (
+                            <p key={idx} className="text-gray-800 dark:text-gray-200">{line}</p>
+                          ) : null;
+                        })
+                      ) : (
+                        <span className="text-gray-500">Không thể tạo tóm tắt cho email này.</span>
+                      )}
                     </div>
                   )}
                 </div>

@@ -21,15 +21,27 @@ func (g *GeminiService) SummarizeEmail(ctx context.Context, emailText string) (s
 	// Use gemini-2.5-flash for fast summarization
 	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + g.ApiKey
 
-	// Vietnamese prompt for short, concise summary
-	prompt := fmt.Sprintf(`Tóm tắt email sau đây trong 1-2 câu ngắn gọn bằng tiếng Việt. 
-Chỉ nêu ý chính quan trọng nhất, giúp người đọc nắm bắt nhanh nội dung.
-Không cần giải thích chi tiết, không cần lời chào.
+	// Enhanced Vietnamese prompt with professional prompting techniques:
+	// 1. Role-playing: AI đóng vai trợ lý email chuyên nghiệp
+	// 2. Structured output: Format rõ ràng với action items
+	// 3. Context awareness: Nhận biết loại email (meeting, task, info...)
+	// 4. Actionable: Highlight việc cần làm nếu có
+	prompt := fmt.Sprintf(`Bạn là trợ lý email thông minh. Phân tích email sau và tạo tóm tắt HỮU ÍCH giúp user quyết định nhanh.
 
-Email:
+HƯỚNG DẪN:
+- Dòng 1: Tóm tắt ý chính trong 1 câu ngắn gọn
+- Dòng 2 (nếu có): "📌 Cần làm: [action item]" hoặc "📅 Deadline: [thời gian]" hoặc "💡 Lưu ý: [điểm quan trọng]"
+- Nếu email quảng cáo/spam: chỉ ghi "Quảng cáo từ [tên công ty]"
+- Ngôn ngữ: Tiếng Việt, tối đa 2 dòng
+
+VÍ DỤ OUTPUT TỐT:
+"Cuộc họp team vào thứ 5 lúc 14h về tiến độ dự án ABC.
+📌 Cần làm: Chuẩn bị báo cáo tiến độ trước thứ 4."
+
+EMAIL:
 %s
 
-Tóm tắt:`, emailText)
+TÓM TẮT:`, emailText)
 
 	payload := map[string]interface{}{
 		"contents": []map[string]interface{}{
