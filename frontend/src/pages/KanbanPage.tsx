@@ -19,7 +19,7 @@ import { SnoozeDialog } from "@/components/inbox/SnoozeDialog";
 import KanbanSettings from "@/components/kanban/KanbanSettings";
 import SnoozedDrawer from "@/components/kanban/SnoozedDrawer";
 import { Settings } from "lucide-react";
-import { getKanbanColumnFromCache, saveKanbanColumnToCache } from "@/lib/db";
+import { getKanbanColumnFromCache, saveKanbanColumnToCache, getAllSummariesFromCache, saveSummaryToCache, saveSummariesToCache } from "@/lib/db";
 import {
   Dialog,
   DialogContent,
@@ -297,6 +297,31 @@ export default function KanbanPage() {
     Record<string, { summary: string; loading: boolean }>
   >({});
 
+  // Load cached summaries from IndexedDB on mount (instant display)
+  useEffect(() => {
+    const loadCachedSummaries = async () => {
+      try {
+        const cachedSummaries = await getAllSummariesFromCache();
+        if (Object.keys(cachedSummaries).length > 0) {
+          setSummaryStates((prev) => {
+            const next = { ...prev };
+            for (const [emailId, summary] of Object.entries(cachedSummaries)) {
+              // Only add if not already present (don't overwrite newer data)
+              if (!next[emailId]) {
+                next[emailId] = { summary, loading: false };
+              }
+            }
+            return next;
+          });
+          console.log(`[IndexedDB] Loaded ${Object.keys(cachedSummaries).length} cached summaries`);
+        }
+      } catch (error) {
+        console.error("Error loading cached summaries:", error);
+      }
+    };
+    loadCachedSummaries();
+  }, []);
+
   // Initial load: fetch columns + mailboxes, rồi fetch emails cho tất cả cột (default + custom)
   // OPTIMIZED: Load columns in batches to avoid overwhelming the backend
   useEffect(() => {
@@ -350,6 +375,8 @@ export default function KanbanPage() {
                 }
                 return next;
               });
+              // Save to IndexedDB for persistence
+              saveSummariesToCache(summaries);
             }
           } catch (error) {
             console.error("Error queueing summaries:", error);
@@ -437,6 +464,8 @@ export default function KanbanPage() {
         ...prev,
         [emailId]: { summary, loading: false },
       }));
+      // Save to IndexedDB for persistence
+      saveSummaryToCache(emailId, summary);
     } catch (error) {
       console.error("Error fetching summary:", error);
       setSummaryStates((prev) => ({
@@ -673,6 +702,8 @@ export default function KanbanPage() {
                 ...prev,
                 [email_id]: { summary, loading: false },
               }));
+              // Save to IndexedDB for persistence
+              saveSummaryToCache(email_id, summary);
             }
             return;
           }
@@ -1320,6 +1351,16 @@ export default function KanbanPage() {
             await reloadAllKanbanColumns();
           } catch (error) {
             console.error("Error reloading columns after settings:", error);
+          }
+        }}
+        onColumnsChange={async () => {
+          // Immediately reload when columns are created/updated/deleted
+          try {
+            const columns = await emailService.getKanbanColumns();
+            setKanbanColumnConfigs(columns);
+            await reloadAllKanbanColumns();
+          } catch (error) {
+            console.error("Error reloading after column change:", error);
           }
         }}
         availableLabels={mailboxes.map((mb) => ({ id: mb.id, name: mb.name }))}

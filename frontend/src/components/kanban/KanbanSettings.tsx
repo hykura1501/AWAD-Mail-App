@@ -22,12 +22,14 @@ const DEFAULT_COLUMNS: Array<{
 interface KanbanSettingsProps {
   isOpen: boolean;
   onClose: () => void;
+  onColumnsChange?: () => void; // Called when columns are created/updated/deleted
   availableLabels: Array<{ id: string; name: string }>; // Available Gmail labels for mapping
 }
 
 export default function KanbanSettings({
   isOpen,
   onClose,
+  onColumnsChange,
   availableLabels,
 }: KanbanSettingsProps) {
   const queryClient = useQueryClient();
@@ -105,6 +107,7 @@ export default function KanbanSettings({
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
       setIsCreating(false);
       setCreateRemoveLabels("");
+      onColumnsChange?.(); // Notify parent to reload
     },
   });
 
@@ -121,6 +124,7 @@ export default function KanbanSettings({
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
       setEditingColumn(null);
       setEditRemoveLabels("");
+      onColumnsChange?.(); // Notify parent to reload
     },
   });
 
@@ -129,6 +133,7 @@ export default function KanbanSettings({
     mutationFn: (columnId: string) => emailService.deleteKanbanColumn(columnId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanbanColumns"] });
+      onColumnsChange?.(); // Notify parent to reload
     },
   });
 

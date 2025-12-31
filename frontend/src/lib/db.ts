@@ -168,3 +168,71 @@ export const clearKanbanCache = async () => {
     console.error("Error clearing kanban cache:", error);
   }
 };
+
+// ============================================
+// AI Summary cache functions
+// Stores summaries by email ID for instant display
+// ============================================
+const SUMMARY_CACHE_PREFIX = "summary-";
+
+// Save a single summary to IndexedDB
+export const saveSummaryToCache = async (emailId: string, summary: string) => {
+  const key = `${SUMMARY_CACHE_PREFIX}${emailId}`;
+  await saveToCache(key, { summary, cachedAt: Date.now() });
+};
+
+// Get a single summary from cache
+export const getSummaryFromCache = async (emailId: string): Promise<string | null> => {
+  const key = `${SUMMARY_CACHE_PREFIX}${emailId}`;
+  const cached = await getFromCache(key);
+  return cached?.summary || null;
+};
+
+// Get all cached summaries (for bulk loading)
+export const getAllSummariesFromCache = async (): Promise<Record<string, string>> => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.getAll();
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        const entries = request.result || [];
+        const summaries: Record<string, string> = {};
+        for (const entry of entries) {
+          if (entry.key?.startsWith(SUMMARY_CACHE_PREFIX) && entry.data?.summary) {
+            const emailId = entry.key.replace(SUMMARY_CACHE_PREFIX, "");
+            summaries[emailId] = entry.data.summary;
+          }
+        }
+        resolve(summaries);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error("Error getting all cached summaries:", error);
+    return {};
+  }
+};
+
+// Save multiple summaries at once (batch operation)
+export const saveSummariesToCache = async (summaries: Record<string, string>) => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    
+    for (const [emailId, summary] of Object.entries(summaries)) {
+      const key = `${SUMMARY_CACHE_PREFIX}${emailId}`;
+      store.put({ key, data: { summary, cachedAt: Date.now() }, timestamp: Date.now() });
+    }
+    
+    return new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.error("Error saving summaries to cache:", error);
+  }
+};
