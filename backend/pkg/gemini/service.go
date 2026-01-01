@@ -33,6 +33,7 @@ HƯỚNG DẪN:
 - Dòng 2 (nếu có): "📌 Cần làm: [action item]" hoặc "📅 Deadline: [thời gian]" hoặc "💡 Lưu ý: [điểm quan trọng]"
 - Nếu email quảng cáo/spam: chỉ ghi "Quảng cáo từ [tên công ty]"
 - Ngôn ngữ: Tiếng Việt, tối đa 2 dòng
+- QUAN TRỌNG: Viết đầy đủ, KHÔNG được cắt ngắn với "..." hoặc bỏ lửng câu
 
 VÍ DỤ OUTPUT TỐT:
 "Cuộc họp team vào thứ 5 lúc 14h về tiến độ dự án ABC.
