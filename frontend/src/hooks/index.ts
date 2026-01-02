@@ -14,4 +14,5 @@ export {
   type UseSSEOptions,
   type UseSSEReturn,
   type SSEEventHandlers,
+  type NewEmailInfo,
 } from "./useSSE";

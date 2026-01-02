@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
 import type { Email } from "@/types/email";
+import { toast } from "sonner";
 import MailboxList from "@/components/inbox/MailboxList";
 import EmailList from "@/components/inbox/EmailList";
 import EmailDetail from "@/components/inbox/EmailDetail";
@@ -61,11 +62,61 @@ export default function InboxPage() {
     setHeaderSearchQuery("");
   };
 
+  // Track known email IDs to detect new emails
+  const knownEmailIdsRef = useRef<Set<string>>(new Set());
+  const isInitialLoadRef = useRef(true);
+
+  // Helper to show toast for new email
+  const showNewEmailToast = useCallback((email: Email) => {
+    const senderName = email.from_name || email.from.split('<')[0].trim().replace(/"/g, '') || 'Unknown';
+    toast.info(
+      <div className="flex flex-col gap-1">
+        <div className="font-semibold text-sm">Email mới từ {senderName}</div>
+        <div className="text-xs text-gray-600 dark:text-gray-300 line-clamp-1">
+          {email.subject || '(Không có tiêu đề)'}
+        </div>
+      </div>,
+      {
+        duration: 8000,
+        action: {
+          label: 'Xem',
+          onClick: () => {
+            navigate(`/inbox/${email.id}`);
+          },
+        },
+      }
+    );
+  }, [navigate]);
+
   // SSE connection for real-time updates - extracted to custom hook
   useSSE({
     enabled: !!user,
     handlers: {
-      onEmailUpdate: () => {
+      onEmailUpdate: async () => {
+        // Fetch latest inbox emails to detect new ones
+        try {
+          const response = await emailService.getEmailsByMailbox('inbox', 10, 0);
+          const newEmails = response.emails;
+          
+          // Skip notification on initial load
+          if (isInitialLoadRef.current) {
+            // Initialize known IDs
+            newEmails.forEach(e => knownEmailIdsRef.current.add(e.id));
+            isInitialLoadRef.current = false;
+          } else {
+            // Check for new emails
+            for (const email of newEmails) {
+              if (!knownEmailIdsRef.current.has(email.id)) {
+                showNewEmailToast(email);
+                knownEmailIdsRef.current.add(email.id);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[SSE] Error fetching new emails:', error);
+        }
+        
+        // Refetch queries as before
         queryClient.refetchQueries({ queryKey: ["emails"] });
         queryClient.refetchQueries({ queryKey: ["mailboxes"] });
       },

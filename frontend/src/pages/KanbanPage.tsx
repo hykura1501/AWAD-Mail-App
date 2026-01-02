@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
@@ -20,6 +20,7 @@ import { Settings } from "lucide-react";
 import { getKanbanColumnFromCache, saveKanbanColumnToCache, getAllSummariesFromCache, saveSummaryToCache, saveSummariesToCache } from "@/lib/db";
 import { useTheme, useSSE } from "@/hooks";
 import KeyboardShortcutsDialog from "@/components/common/KeyboardShortcutsDialog";
+import { toast } from "sonner";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
@@ -640,12 +641,61 @@ export default function KanbanPage() {
     return [...defaultColumns, ...customColumns];
   }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit, kanbanColumnConfigs]);
 
+  // Track known email IDs to detect new emails for toast notifications
+  const knownInboxEmailIdsRef = useRef<Set<string>>(new Set());
+  const isInitialKanbanLoadRef = useRef(true);
+
+  // Helper to show toast for new email in Kanban
+  const showNewEmailToastKanban = useCallback((email: Email) => {
+    const senderName = email.from_name || email.from.split('<')[0].trim().replace(/"/g, '') || 'Unknown';
+    toast.info(
+      <div className="flex flex-col gap-1">
+        <div className="font-semibold text-sm">📧 Email mới từ {senderName}</div>
+        <div className="text-xs text-gray-600 dark:text-gray-300 line-clamp-1">
+          {email.subject || '(Không có tiêu đề)'}
+        </div>
+      </div>,
+      {
+        duration: 8000,
+        action: {
+          label: 'Xem',
+          onClick: () => {
+            setDetailEmailId(email.id);
+          },
+        },
+      }
+    );
+  }, []);
+
   // SSE connection for real-time updates - using custom hook
   // KanbanPage has special handlers for summary updates and Kanban reloading
   useSSE({
     enabled: !!user,
     handlers: {
-      onEmailUpdate: () => {
+      onEmailUpdate: async () => {
+        // Fetch latest inbox emails to detect new ones (before reloading columns)
+        try {
+          const response = await emailService.getEmailsByStatus('inbox', 10, 0);
+          const latestInboxEmails = response.emails;
+          
+          // Skip notification on initial load
+          if (isInitialKanbanLoadRef.current) {
+            // Initialize known IDs
+            latestInboxEmails.forEach(e => knownInboxEmailIdsRef.current.add(e.id));
+            isInitialKanbanLoadRef.current = false;
+          } else {
+            // Check for new emails
+            for (const email of latestInboxEmails) {
+              if (!knownInboxEmailIdsRef.current.has(email.id)) {
+                showNewEmailToastKanban(email);
+                knownInboxEmailIdsRef.current.add(email.id);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[SSE] Error fetching new emails for toast:', error);
+        }
+        
         // Reload all Kanban columns (not using React Query on this page)
         reloadAllKanbanColumns().catch((error) => {
           console.error("Error reloading Kanban via SSE:", error);

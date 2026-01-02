@@ -4,9 +4,19 @@ import { getAccessToken } from "@/lib/api-client";
 import { API_BASE_URL } from "@/config/api";
 import { QUERY_KEYS } from "@/constants";
 
+/** Information about a new email for toast notifications */
+export interface NewEmailInfo {
+  id: string;
+  subject: string;
+  from_name: string;
+  from: string;
+}
+
 export interface SSEEventHandlers {
   /** Called when a new email arrives or is updated */
   onEmailUpdate?: () => void;
+  /** Called when a new email is detected (for toast notifications) */
+  onNewEmail?: (email: NewEmailInfo) => void;
   /** Called when an AI summary is ready */
   onSummaryUpdate?: (emailId: string, summary: string) => void;
   /** Called on SSE connection error */
