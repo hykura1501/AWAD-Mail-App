@@ -4,7 +4,6 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
-import { getAccessToken } from "@/lib/api-client";
 import type { Email } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
 import EmailList from "@/components/inbox/EmailList";
@@ -12,8 +11,9 @@ import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import SearchBar from "@/components/search/SearchBar";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { API_BASE_URL } from "@/config/api";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
+import { useTheme, useSSE } from "@/hooks";
+import { SEARCH_MODES, type SearchMode } from "@/constants";
 
 export default function InboxPage() {
   const navigate = useNavigate();
@@ -39,43 +39,15 @@ export default function InboxPage() {
   );
   // Search query from header - when set, shows search results in email list
   const [headerSearchQuery, setHeaderSearchQuery] = useState("");
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window !== "undefined") {
-      const savedTheme = localStorage.getItem("theme");
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      const initialTheme = (savedTheme as "light" | "dark") || systemTheme;
-
-      // Apply theme immediately on mount
-      if (initialTheme === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-
-      return initialTheme;
-    }
-    return "light";
-  });
-
-  const toggleTheme = () => {
-    const newTheme = theme === "light" ? "dark" : "light";
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    if (newTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
+  
+  // Theme management - extracted to custom hook
+  const { theme, toggleTheme } = useTheme();
 
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
   const selectedEmailId = emailId || null;
   // Search mode: "semantic" or "fuzzy"
-  const [searchMode, setSearchMode] = useState<"semantic" | "fuzzy">("semantic");
+  const [searchMode, setSearchMode] = useState<SearchMode>(SEARCH_MODES.SEMANTIC);
 
   const handleSearch = (query: string, mode: "semantic" | "fuzzy") => {
     const trimmed = query.trim();
@@ -89,59 +61,23 @@ export default function InboxPage() {
     setHeaderSearchQuery("");
   };
 
+  // SSE connection for real-time updates - extracted to custom hook
+  useSSE({
+    enabled: !!user,
+    handlers: {
+      onEmailUpdate: () => {
+        queryClient.refetchQueries({ queryKey: ["emails"] });
+        queryClient.refetchQueries({ queryKey: ["mailboxes"] });
+      },
+    },
+  });
+
+  // Register Gmail push notifications when user is available
   useEffect(() => {
     if (user) {
-      // Start watching for email updates (register Gmail push notifications)
       emailService.watchMailbox().catch(console.error);
-
-      // Connect to SSE
-      const token = getAccessToken();
-      const sseUrl = `${API_BASE_URL}/events?token=${token}`;
-      console.log("[SSE] Connecting to:", sseUrl);
-      
-      const eventSource = new EventSource(sseUrl, { withCredentials: true });
-
-      // Handle open event
-      eventSource.onopen = () => {
-        console.log("[SSE] Connection opened");
-      };
-
-      // Handle all messages (no event type specified)
-      eventSource.onmessage = (event) => {
-        console.log("[SSE] Raw message received:", event.data);
-        try {
-          const data = JSON.parse(event.data);
-          console.log("[SSE] Parsed data:", data);
-          
-          if (data.type === "email_update") {
-            console.log("[SSE] Email update detected, refetching...");
-            
-            // Force immediate refetch of all email queries
-            queryClient.refetchQueries({ queryKey: ["emails"] });
-            queryClient.refetchQueries({ queryKey: ["mailboxes"] });
-            
-            console.log("[SSE] Refetch triggered");
-          }
-        } catch (error) {
-          console.error("[SSE] Error parsing message:", error);
-        }
-      };
-
-      // Also listen for named events just in case
-      eventSource.addEventListener("email_update", (event) => {
-        console.log("[SSE] Named email_update event:", event);
-      });
-
-      eventSource.onerror = (error) => {
-        console.error("[SSE] Error:", error, "readyState:", eventSource.readyState);
-      };
-
-      return () => {
-        console.log("[SSE] Closing connection");
-        eventSource.close();
-      };
     }
-  }, [user, queryClient]);
+  }, [user]);
 
   const logoutMutation = useMutation({
     mutationFn: authService.logout,

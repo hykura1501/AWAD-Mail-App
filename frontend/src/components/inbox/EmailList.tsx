@@ -4,7 +4,6 @@ import { emailService } from "@/services/email.service";
 import { getFromCache, saveToCache } from "@/lib/db";
 import type { Email, EmailsResponse } from "@/types/email";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +15,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import StarIcon from "@/assets/star.svg?react";
+import { getTimeDisplay } from "@/utils";
+import { ITEMS_PER_PAGE } from "@/constants";
 
 interface EmailListProps {
   mailboxId: string | null;
@@ -26,8 +27,6 @@ interface EmailListProps {
   searchMode?: "semantic" | "fuzzy"; // Search mode from header
   onClearSearch?: () => void; // Callback to clear search
 }
-
-const ITEMS_PER_PAGE = 20;
 
 export default function EmailList({
   mailboxId,
@@ -455,20 +454,7 @@ export default function EmailList({
     setShowDeleteConfirm(true);
   };
 
-  const getTimeDisplay = (date: string) => {
-    const emailDate = new Date(date);
-    const now = new Date();
-    const diffInHours =
-      (now.getTime() - emailDate.getTime()) / (1000 * 60 * 60);
 
-    if (diffInHours < 24) {
-      return format(emailDate, "h:mm a");
-    } else if (diffInHours < 48) {
-      return "Yesterday";
-    } else {
-      return format(emailDate, "MMM d");
-    }
-  };
 
   if (!mailboxId && !isExternalSearch) {
     return (

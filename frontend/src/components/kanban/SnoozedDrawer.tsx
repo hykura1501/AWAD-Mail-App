@@ -1,5 +1,6 @@
 import { X, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Email } from "@/types/email";
+import { getSenderName, getCleanPreview } from "@/utils";
 
 interface SnoozedDrawerProps {
   isOpen: boolean;
@@ -10,31 +11,6 @@ interface SnoozedDrawerProps {
   offset?: number;
   limit?: number;
   onPageChange?: (dir: 1 | -1) => void;
-}
-
-// Helper to get clean sender name
-function getSenderName(email: Email): string {
-  if (email.from_name) {
-    return email.from_name.replace(/^["']|["']$/g, '').trim();
-  }
-  const from = email.from || "";
-  const match = from.match(/^["']?([^"'<]+)["']?\s*<.*>$/);
-  if (match) {
-    return match[1].trim();
-  }
-  return from.replace(/^["']|["']$/g, '').trim();
-}
-
-// Helper to strip HTML
-function stripHtml(html: string): string {
-  const tmp = document.createElement("DIV");
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || "";
-}
-
-function getCleanPreview(email: Email): string {
-  const text = email.preview || email.body || "";
-  return stripHtml(text).slice(0, 80);
 }
 
 // Format snooze expiration time in a user-friendly way
@@ -156,7 +132,7 @@ export default function SnoozedDrawer({
                 </div>
 
                 <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-                  {getCleanPreview(email)}
+                  {getCleanPreview(email.preview || email.body, 80)}
                 </div>
 
                 {/* Snooze Time Display */}

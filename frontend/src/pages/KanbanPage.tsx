@@ -4,13 +4,10 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { emailService } from "@/services/email.service";
-import { getAccessToken } from "@/lib/api-client";
 import type { Email, KanbanColumnConfig, Mailbox } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
-import EmailDetail from "@/components/inbox/EmailDetail";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { API_BASE_URL } from "@/config/api";
 import KanbanBoard from "@/components/kanban/KanbanBoard";
 import type { KanbanColumn } from "@/components/kanban/KanbanBoard";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
@@ -18,14 +15,11 @@ import KanbanFilters, { type SortOption, type FilterState } from "@/components/k
 import { SnoozeDialog } from "@/components/inbox/SnoozeDialog";
 import KanbanSettings from "@/components/kanban/KanbanSettings";
 import SnoozedDrawer from "@/components/kanban/SnoozedDrawer";
+import EmailDetailPopup from "@/components/kanban/EmailDetailPopup";
 import { Settings } from "lucide-react";
 import { getKanbanColumnFromCache, saveKanbanColumnToCache, getAllSummariesFromCache, saveSummaryToCache, saveSummariesToCache } from "@/lib/db";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useTheme, useSSE } from "@/hooks";
+import KeyboardShortcutsDialog from "@/components/common/KeyboardShortcutsDialog";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
@@ -44,36 +38,8 @@ export default function KanbanPage() {
     body: "",
   });
 
-  // Theme state
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window !== "undefined") {
-      const savedTheme = localStorage.getItem("theme");
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      const initialTheme = (savedTheme as "light" | "dark") || systemTheme;
-
-      if (initialTheme === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-      return initialTheme;
-    }
-    return "light";
-  });
-
-  const toggleTheme = () => {
-    const newTheme = theme === "light" ? "dark" : "light";
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    if (newTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
+  // Theme management - extracted to custom hook
+  const { theme, toggleTheme } = useTheme();
 
   const logoutMutation = useMutation({
     mutationFn: authService.logout,
@@ -674,95 +640,50 @@ export default function KanbanPage() {
     return [...defaultColumns, ...customColumns];
   }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit, kanbanColumnConfigs]);
 
+  // SSE connection for real-time updates - using custom hook
+  // KanbanPage has special handlers for summary updates and Kanban reloading
+  useSSE({
+    enabled: !!user,
+    handlers: {
+      onEmailUpdate: () => {
+        // Reload all Kanban columns (not using React Query on this page)
+        reloadAllKanbanColumns().catch((error) => {
+          console.error("Error reloading Kanban via SSE:", error);
+        });
+        emailService
+          .getAllMailboxes()
+          .then((mbs) => setMailboxes(mbs))
+          .catch((error) => {
+            console.error("Error reloading mailboxes via SSE:", error);
+          });
+        
+        // Also invalidate React Query for other pages
+        queryClient.invalidateQueries({
+          queryKey: ["emails"],
+          refetchType: "none",
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["mailboxes"],
+          refetchType: "none",
+        });
+      },
+      onSummaryUpdate: (emailId, summary) => {
+        setSummaryStates((prev) => ({
+          ...prev,
+          [emailId]: { summary, loading: false },
+        }));
+        // Save to IndexedDB for persistence
+        saveSummaryToCache(emailId, summary);
+      },
+    },
+  });
+
+  // Register Gmail push notifications
   useEffect(() => {
     if (user) {
-      // Start watching for email updates
       emailService.watchMailbox().catch(console.error);
-
-      // Connect to SSE
-      const token = getAccessToken();
-      const eventSource = new EventSource(
-        `${API_BASE_URL}/events?token=${token}`,
-        {
-          withCredentials: true,
-        }
-      );
-
-      let lastMutationTime = 0;
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          // Handle real-time summary updates from AI worker
-          if (data.type === "summary_update") {
-            const { email_id, summary } = data.payload || {};
-            if (email_id && summary) {
-              setSummaryStates((prev) => ({
-                ...prev,
-                [email_id]: { summary, loading: false },
-              }));
-              // Save to IndexedDB for persistence
-              saveSummaryToCache(email_id, summary);
-            }
-            return;
-          }
-          
-          if (data.type === "email_update") {
-            // Ignore SSE updates for 3 seconds after user actions to prevent conflicts
-            const timeSinceLastMutation = Date.now() - lastMutationTime;
-            if (timeSinceLastMutation < 3000) {
-              return;
-            }
-
-            // Không dùng useQuery ở trang này, nên eager reload trực tiếp
-            reloadAllKanbanColumns().catch((error) => {
-              console.error("Error reloading Kanban via SSE:", error);
-            });
-            emailService
-              .getAllMailboxes()
-              .then((mbs) => setMailboxes(mbs))
-              .catch((error) => {
-                console.error("Error reloading mailboxes via SSE:", error);
-              });
-
-            // Vẫn invalidate cho các trang khác nếu có dùng React Query
-            queryClient.invalidateQueries({
-              queryKey: ["emails"],
-              refetchType: "none",
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["mailboxes"],
-              refetchType: "none",
-            });
-          }
-        } catch (error) {
-          console.error("Error parsing SSE message:", error);
-        }
-      };
-
-      // Track mutation time to debounce SSE updates
-      const unsubscribe = queryClient.getMutationCache().subscribe((event) => {
-        if (
-          event?.type === "updated" &&
-          event.mutation.state.status === "pending"
-        ) {
-          lastMutationTime = Date.now();
-        }
-      });
-
-      eventSource.onerror = (error) => {
-        console.error("SSE error:", error);
-        eventSource.close();
-      };
-
-      return () => {
-        eventSource.close();
-        unsubscribe();
-      };
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, queryClient]);
+  }, [user]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-[#111418] text-gray-900 dark:text-white overflow-hidden font-sans transition-colors duration-200">
@@ -840,26 +761,11 @@ export default function KanbanPage() {
       </div>
 
       {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent className="max-w-[240px] p-4">
-          <DialogHeader className="pb-3">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <span className="material-symbols-outlined text-xl">keyboard</span>
-              Phím tắt
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            {shortcuts.map((s) => (
-              <div key={s.key} className="flex justify-between items-center text-sm">
-                <span className="text-gray-600 dark:text-gray-400">{s.action}</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
-                  {s.key}
-                </kbd>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <KeyboardShortcutsDialog
+        open={showShortcuts}
+        onOpenChange={setShowShortcuts}
+        shortcuts={shortcuts}
+      />
 
       {/* Filter Bar */}
       <div className="hidden lg:flex items-center gap-2 pr-4 bg-white dark:bg-[#0f1724]">
@@ -1228,92 +1134,13 @@ export default function KanbanPage() {
 
       {/* Popup chi tiết email + summary Gemini */}
       {detailEmailId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30  backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col relative overflow-hidden border border-gray-200 dark:border-gray-800">
-            <div className="absolute top-4 right-4 z-10">
-              <button
-                className="px-3 py-1.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-sm font-medium transition-colors border border-gray-200 dark:border-gray-700"
-                onClick={() => setDetailEmailId(null)}
-              >
-                ✕ Đóng
-              </button>
-            </div>
-
-            <div className="overflow-y-auto p-6 custom-scrollbar">
-              <EmailDetail
-                emailId={detailEmailId}
-                onToggleStar={() => {}}
-                theme={theme}
-              />
-
-              <div className="mt-8 border-t border-gray-200 dark:border-gray-800 pt-6">
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-100 dark:border-blue-800/50">
-                  <div className="flex items-center gap-2 font-semibold mb-3 text-blue-700 dark:text-blue-400">
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 10V3L4 14h7v7l9-11h-7z"
-                      />
-                    </svg>
-                    Tóm tắt thông minh (Gemini AI)
-                  </div>
-
-                  {isSummaryLoading ? (
-                    <div className="flex items-center gap-3 text-gray-600 dark:text-gray-400 py-2">
-                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                      <span>Đang phân tích nội dung email...</span>
-                    </div>
-                  ) : (
-                    <div className="text-sm leading-relaxed space-y-2">
-                      {summary ? (
-                        summary.split('\n').map((line, idx) => {
-                          // Highlight action items with colored badges
-                          if (line.includes('📌 Cần làm:')) {
-                            return (
-                              <div key={idx} className="flex items-start gap-2 bg-orange-50 dark:bg-orange-900/30 p-2 rounded-lg border border-orange-200 dark:border-orange-800">
-                                <span className="text-orange-500 dark:text-orange-400 font-semibold whitespace-nowrap">📌 Cần làm:</span>
-                                <span className="text-orange-700 dark:text-orange-300">{line.replace('📌 Cần làm:', '').trim()}</span>
-                              </div>
-                            );
-                          }
-                          if (line.includes('📅 Deadline:')) {
-                            return (
-                              <div key={idx} className="flex items-start gap-2 bg-red-50 dark:bg-red-900/30 p-2 rounded-lg border border-red-200 dark:border-red-800">
-                                <span className="text-red-500 dark:text-red-400 font-semibold whitespace-nowrap">📅 Deadline:</span>
-                                <span className="text-red-700 dark:text-red-300">{line.replace('📅 Deadline:', '').trim()}</span>
-                              </div>
-                            );
-                          }
-                          if (line.includes('💡 Lưu ý:')) {
-                            return (
-                              <div key={idx} className="flex items-start gap-2 bg-yellow-50 dark:bg-yellow-900/30 p-2 rounded-lg border border-yellow-200 dark:border-yellow-800">
-                                <span className="text-yellow-600 dark:text-yellow-400 font-semibold whitespace-nowrap">💡 Lưu ý:</span>
-                                <span className="text-yellow-700 dark:text-yellow-300">{line.replace('💡 Lưu ý:', '').trim()}</span>
-                              </div>
-                            );
-                          }
-                          // Regular summary text
-                          return line.trim() ? (
-                            <p key={idx} className="text-gray-800 dark:text-gray-200">{line}</p>
-                          ) : null;
-                        })
-                      ) : (
-                        <span className="text-gray-500">Không thể tạo tóm tắt cho email này.</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <EmailDetailPopup
+          emailId={detailEmailId}
+          onClose={() => setDetailEmailId(null)}
+          theme={theme}
+          summary={summary}
+          isSummaryLoading={isSummaryLoading}
+        />
       )}
 
       {/* Compose Email Dialog */}

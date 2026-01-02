@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Email } from "@/types/email";
 import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { getSenderName, getCleanPreview } from "@/utils";
 
 export type KanbanColumn = {
   id: string;
@@ -35,37 +36,6 @@ export type KanbanBoardProps = {
   onRequestSummary?: (emailId: string) => void;
   isLoading?: boolean;
 };
-
-// Helper function to strip HTML tags and decode entities
-function stripHtml(html: string): string {
-  const tmp = document.createElement("DIV");
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || "";
-}
-
-// Helper to get clean preview text
-function getCleanPreview(email: Email): string {
-  const text = email.preview || email.body || "";
-  const cleaned = stripHtml(text);
-  return cleaned.slice(0, 100);
-}
-
-// Helper to get clean sender name (remove quotes and email address)
-function getSenderName(email: Email): string {
-  // Use from_name if available
-  if (email.from_name) {
-    return email.from_name.replace(/^["']|["']$/g, '').trim();
-  }
-  // Otherwise extract from 'from' field
-  const from = email.from || "";
-  // Match pattern: "Name" <email> or Name <email>
-  const match = from.match(/^["']?([^"'<]+)["']?\s*<.*>$/);
-  if (match) {
-    return match[1].trim();
-  }
-  // If no match, just remove quotes and return
-  return from.replace(/^["']|["']$/g, '').trim();
-}
 
 function DraggableEmailCard({ 
   email, 
@@ -117,7 +87,7 @@ function DraggableEmailCard({
       </div>
       
       <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-        {getCleanPreview(email)}
+        {getCleanPreview(email.preview || email.body)}
       </div>
 
       {/* Summary Display (when loaded) - with formatted action items */}
@@ -414,7 +384,7 @@ export default function KanbanBoard({
                 {activeEmail.subject}
               </div>
               <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-                {getCleanPreview(activeEmail)}
+                {getCleanPreview(activeEmail.preview || activeEmail.body)}
               </div>
             </div>
           ) : null}
