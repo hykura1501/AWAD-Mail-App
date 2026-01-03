@@ -46,3 +46,4 @@ frontend/.env
 logs/
 *.log
 .idea
+backend/noti-firebase.json

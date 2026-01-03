@@ -41,6 +41,14 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			auth.POST("/logout", authHandler.Logout)
 			auth.POST("/set-password", delivery.AuthMiddleware(authUsecase), authHandler.SetPassword)
 		}
+		
+		// FCM routes (protected)
+		fcm := api.Group("/fcm")
+		fcm.Use(delivery.AuthMiddleware(authUsecase))
+		{
+			fcm.POST("/register", authHandler.RegisterFCMToken)
+			fcm.DELETE("/:token", authHandler.UnregisterFCMToken)
+		}
 
 		// Email routes (protected)
 		emails := api.Group("/emails")

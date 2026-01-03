@@ -26,14 +26,16 @@ import (
 // authUsecase implements AuthUsecase interface
 type authUsecase struct {
 	userRepo          repository.UserRepository
+	fcmRepo           repository.FCMTokenRepository
 	config            *config.Config
 	emailSyncCallback EmailSyncCallback // Optional callback to sync emails after auth
 }
 
 // NewAuthUsecase creates a new instance of authUsecase
-func NewAuthUsecase(userRepo repository.UserRepository, cfg *config.Config) AuthUsecase {
+func NewAuthUsecase(userRepo repository.UserRepository, fcmRepo repository.FCMTokenRepository, cfg *config.Config) AuthUsecase {
 	return &authUsecase{
 		userRepo: userRepo,
+		fcmRepo:  fcmRepo,
 		config:   cfg,
 	}
 }
@@ -500,4 +502,12 @@ func (u *authUsecase) ValidateToken(tokenString string) (*authdomain.User, error
 	}
 
 	return user, nil
+}
+
+func (u *authUsecase) RegisterFCMToken(userID, token, deviceInfo string) error {
+	return u.fcmRepo.SaveToken(userID, token, deviceInfo)
+}
+
+func (u *authUsecase) UnregisterFCMToken(token string) error {
+	return u.fcmRepo.DeleteToken(token)
 }

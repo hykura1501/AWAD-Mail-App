@@ -16,3 +16,4 @@ export {
   type SSEEventHandlers,
   type NewEmailInfo,
 } from "./useSSE";
+export { useFCM } from "./useFCM";

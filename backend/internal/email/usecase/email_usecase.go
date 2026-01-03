@@ -115,16 +115,15 @@ func (u *emailUsecase) syncWorker(workerID int) {
 			continue
 		}
 
-		// Check if email has already been synced (optimized: 1 query instead of 2)
+		// Check if email has already been synced (atomic upsert)
 		wasAlreadySynced, err := u.emailSyncHistoryRepo.EnsureEmailSynced(job.UserID, job.EmailID)
 		if err != nil {
-			fmt.Printf("[Worker %d] Failed to check sync history for email %s: %v\n", workerID, job.EmailID, err)
+			// Silent fail - no need to spam logs for sync history errors
 			continue
 		}
 
 		if wasAlreadySynced {
-			// Email already synced, skip
-			fmt.Printf("[Worker %d] Email %s already synced, skipping\n", workerID, job.EmailID)
+			// Email already synced, skip silently
 			continue
 		}
 
@@ -134,9 +133,8 @@ func (u *emailUsecase) syncWorker(workerID int) {
 		cancel()
 
 		if err != nil {
-			fmt.Printf("[Worker %d] Failed to sync email %s to vector DB: %v\n", workerID, job.EmailID, err)
-		} else {
-			fmt.Printf("[Worker %d] Successfully synced email %s to vector DB\n", workerID, job.EmailID)
+			// Only log actual embedding errors
+			log.Printf("[VectorSync] Failed to sync email %s: %v", job.EmailID, err)
 		}
 	}
 }

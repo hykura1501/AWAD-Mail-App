@@ -16,6 +16,7 @@ import (
 	"ga03-backend/internal/notification"
 	"ga03-backend/pkg/config"
 	"ga03-backend/pkg/database"
+	"ga03-backend/pkg/fcm"
 	"ga03-backend/pkg/gmail"
 	"ga03-backend/pkg/imap"
 	"ga03-backend/pkg/sse"
@@ -32,12 +33,13 @@ func main() {
 	}
 
 	// Auto-migrate database schemas
-	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &emaildomain.EmailSyncHistory{}, &emaildomain.KanbanColumn{}, &emaildomain.EmailKanbanColumn{}, &emaildomain.EmailSummary{}); err != nil {
+	if err := db.AutoMigrate(&authdomain.User{}, &authdomain.RefreshToken{}, &authdomain.FCMToken{}, &emaildomain.EmailSyncHistory{}, &emaildomain.KanbanColumn{}, &emaildomain.EmailKanbanColumn{}, &emaildomain.EmailSummary{}); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
 	// Initialize repositories (dependency injection)
 	userRepo := authRepo.NewUserRepository(db)
+	fcmTokenRepo := authRepo.NewFCMTokenRepository(db)
 	emailRepository := emailRepo.NewEmailRepository()
 	emailSyncHistoryRepo := emailRepo.NewEmailSyncHistoryRepository(db)
 	kanbanColumnRepo := emailRepo.NewKanbanColumnRepository(db)
@@ -48,9 +50,17 @@ func main() {
 	sseManager := sse.NewManager()
 	go sseManager.Run()
 
+	// Initialize Gmail service (needed for notification service and email usecase)
+	gmailService := gmail.NewService(cfg.GoogleClientID, cfg.GoogleClientSecret)
+
+	// Initialize IMAP service
+	imapService := imap.NewService()
+
 	// Initialize Notification Service (Pub/Sub)
 	// Only start if project ID is configured
 	if cfg.GoogleProjectID != "" {
+		log.Printf("[DEBUG] Initializing notification service with projectID: %s", cfg.GoogleProjectID)
+		
 		// Extract short topic name from full resource name if necessary
 		topicName := cfg.GooglePubSubTopic
 		if parts := strings.Split(topicName, "/"); len(parts) > 1 {
@@ -59,23 +69,35 @@ func main() {
 		if topicName == "" {
 			topicName = "gmail-updates"
 		}
-
-		notifService, err := notification.NewService(cfg.GoogleProjectID, topicName, sseManager, userRepo, cfg.GoogleCredentials)
-		if err != nil {
-			log.Printf("Failed to initialize notification service: %v", err)
+		log.Printf("[DEBUG] Using topic name: %s", topicName)
+		
+		// Initialize FCM Client (optional, notification service works without it)
+		var fcmClient *fcm.Client
+		if cfg.FirebaseCredentials != "" {
+			var err error
+			fcmClient, err = fcm.NewClient(cfg.FirebaseCredentials)
+			if err != nil {
+				log.Printf("[WARN] Failed to initialize FCM client (push notifications disabled): %v", err)
+			} else {
+				log.Printf("[DEBUG] FCM client initialized successfully")
+			}
 		} else {
+			log.Printf("[DEBUG] No Firebase credentials configured, FCM disabled")
+		}
+
+		notifService, err := notification.NewService(cfg.GoogleProjectID, topicName, sseManager, userRepo, fcmTokenRepo, fcmClient, gmailService, cfg.GoogleCredentials)
+		if err != nil {
+			log.Printf("[ERROR] Failed to initialize notification service: %v", err)
+		} else {
+			log.Printf("[DEBUG] Notification service initialized, starting...")
 			go notifService.Start(context.Background())
 		}
+	} else {
+		log.Printf("[WARN] GoogleProjectID not configured, notification service disabled")
 	}
 
-	// Initialize Gmail service
-	gmailService := gmail.NewService(cfg.GoogleClientID, cfg.GoogleClientSecret)
-
-	// Initialize IMAP service
-	imapService := imap.NewService()
-
 	// Initialize use cases (dependency injection)
-	authUsecaseInstance := authUsecase.NewAuthUsecase(userRepo, cfg)
+	authUsecaseInstance := authUsecase.NewAuthUsecase(userRepo, fcmTokenRepo, cfg)
 	emailUsecaseInstance := emailUsecase.NewEmailUsecase(emailRepository, emailSyncHistoryRepo, kanbanColumnRepo, emailKanbanColumnRepo, userRepo, gmailService, imapService, cfg, cfg.GooglePubSubTopic)
 
 	// Set up email sync callback for auth usecase

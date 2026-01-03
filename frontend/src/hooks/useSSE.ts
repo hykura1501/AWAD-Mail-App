@@ -76,6 +76,12 @@ export function useSSE({
   const lastMutationTimeRef = useRef(0);
   const isConnectedRef = useRef(false);
 
+  // Use ref for handlers to avoid reconnecting when handlers change
+  const handlersRef = useRef(handlers);
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -99,7 +105,7 @@ export function useSSE({
 
     eventSource.onopen = () => {
       isConnectedRef.current = true;
-      handlers.onOpen?.();
+      handlersRef.current.onOpen?.();
     };
 
     eventSource.onmessage = (event) => {
@@ -110,7 +116,7 @@ export function useSSE({
         if (data.type === "summary_update") {
           const { email_id, summary } = data.payload || {};
           if (email_id && summary) {
-            handlers.onSummaryUpdate?.(email_id, summary);
+            handlersRef.current.onSummaryUpdate?.(email_id, summary);
           }
           return;
         }
@@ -123,7 +129,7 @@ export function useSSE({
             return;
           }
 
-          handlers.onEmailUpdate?.();
+          handlersRef.current.onEmailUpdate?.();
 
           // Invalidate React Query caches
           queryClient.invalidateQueries({
@@ -141,9 +147,12 @@ export function useSSE({
     };
 
     eventSource.onerror = (error) => {
+      // ignore specific error during development/reloading
+      if (eventSource.readyState === EventSource.CLOSED) return;
+
       console.error("[SSE] Connection error:", error);
       isConnectedRef.current = false;
-      handlers.onError?.(error);
+      handlersRef.current.onError?.(error);
       
       // Close and allow reconnection
       eventSource.close();
@@ -151,7 +160,7 @@ export function useSSE({
     };
 
     eventSourceRef.current = eventSource;
-  }, [enabled, debounceMs, handlers, queryClient]);
+  }, [enabled, debounceMs, queryClient]); // Removed handlers from dependencies
 
   const reconnect = useCallback(() => {
     disconnect();
