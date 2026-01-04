@@ -1,5 +1,4 @@
 import type { Email } from "@/types/email";
-import { getSenderName, getCleanPreview } from "@/utils";
 
 interface SummaryState {
   summary: string;
@@ -8,37 +7,43 @@ interface SummaryState {
 
 interface MobileEmailCardProps {
   email: Email;
-  onClick: () => void;
   summaryState?: SummaryState;
-  onSnooze?: () => void;
-  onUnsnooze?: () => void;
-  onMoveToColumn?: (columnId: string) => void;
-  availableColumns?: string[];
-  currentColumn?: string;
+  cleanPreviewText: (text: string) => string;
+  currentColumn: string;
+  onEmailClick: (emailId: string) => void;
+  onSnooze: (email: { id: string; subject: string }) => void;
+  onUnsnooze: (email: Email) => Promise<void>;
+  onMoveToColumn: (emailId: string, columnId: string) => void;
+  onColumnChange: (columnId: string) => void;
 }
 
-/**
- * Email card component for mobile Kanban view
- * Displays email info with AI summary and action buttons
- */
 export default function MobileEmailCard({
   email,
-  onClick,
   summaryState,
+  cleanPreviewText,
+  currentColumn,
+  onEmailClick,
   onSnooze,
   onUnsnooze,
   onMoveToColumn,
-  availableColumns = ["inbox", "todo", "done"],
-  currentColumn,
+  onColumnChange,
 }: MobileEmailCardProps) {
   const isSnoozed = email.mailbox_id === "snoozed";
 
+  // Extract sender name
+  const getSenderName = () => {
+    let name = email.from_name || email.from || "";
+    const match = name.match(/^"?([^"<]+)"?\s*</);
+    if (match) name = match[1].trim();
+    name = name.replace(/^"|"$/g, "");
+    return name || "Unknown Sender";
+  };
+
   return (
     <div
-      onClick={onClick}
+      onClick={() => onEmailClick(email.id)}
       className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow cursor-pointer"
     >
-      {/* Header: Subject + Date */}
       <div className="flex justify-between items-start mb-2">
         <h3 className="font-semibold text-sm text-gray-900 dark:text-white line-clamp-1">
           {email.subject || "(No Subject)"}
@@ -47,13 +52,12 @@ export default function MobileEmailCard({
           {new Date(email.received_at).toLocaleDateString()}
         </span>
       </div>
-
-      {/* Sender */}
+      
       <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
-        {getSenderName(email)}
+        {getSenderName()}
       </p>
-
-      {/* Preview / Summary */}
+      
+      {/* Show AI summary if available, otherwise show preview */}
       {summaryState?.summary ? (
         <p className="text-xs text-blue-600 dark:text-blue-400 line-clamp-3 italic">
           ✨ {summaryState.summary}
@@ -64,19 +68,18 @@ export default function MobileEmailCard({
         </p>
       ) : (
         <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-          {getCleanPreview(email.preview || email.body)}
+          {cleanPreviewText(email.preview)}
         </p>
       )}
 
       {/* Action Buttons */}
       <div className="mt-3 flex gap-2 flex-wrap">
-        {/* Snooze / Unsnooze Button */}
-        {!isSnoozed && onSnooze ? (
+        {!isSnoozed ? (
           <button
             className="px-3 py-1.5 rounded bg-yellow-400 text-xs text-black hover:bg-yellow-500"
             onClick={(e) => {
               e.stopPropagation();
-              onSnooze();
+              onSnooze({ id: email.id, subject: email.subject });
             }}
           >
             <span className="material-symbols-outlined text-xs mr-1">
@@ -84,12 +87,12 @@ export default function MobileEmailCard({
             </span>
             Snooze
           </button>
-        ) : isSnoozed && onUnsnooze ? (
+        ) : (
           <button
             className="px-3 py-1.5 rounded bg-green-400 text-xs text-black hover:bg-green-500"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
-              onUnsnooze();
+              await onUnsnooze(email);
             }}
           >
             <span className="material-symbols-outlined text-xs mr-1">
@@ -97,24 +100,24 @@ export default function MobileEmailCard({
             </span>
             Unsnooze
           </button>
-        ) : null}
+        )}
 
         {/* Move to column buttons */}
-        {onMoveToColumn &&
-          availableColumns
-            .filter((c) => c !== currentColumn)
-            .map((colId) => (
-              <button
-                key={colId}
-                className="px-3 py-1.5 rounded bg-blue-100 dark:bg-blue-900/30 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveToColumn(colId);
-                }}
-              >
-                Move to {colId}
-              </button>
-            ))}
+        {["inbox", "todo", "done"]
+          .filter((c) => c !== currentColumn)
+          .map((colId) => (
+            <button
+              key={colId}
+              className="px-3 py-1.5 rounded bg-blue-100 dark:bg-blue-900/30 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveToColumn(email.id, colId);
+                onColumnChange(colId);
+              }}
+            >
+              Move to {colId}
+            </button>
+          ))}
       </div>
     </div>
   );
