@@ -60,12 +60,22 @@ func NewSummarizerService(cfg Config) (SummarizerService, error) {
 	case ProviderOllama:
 		return NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel), nil
 		
-	default:
-		// Default to Gemini if API key is available, otherwise Ollama
+	case ProviderAuto:
+		var geminiSvc SummarizerService
 		if cfg.GeminiAPIKey != "" {
-			return &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}, nil
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
 		}
-		return NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel), nil
+		ollamaSvc := NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
+		
+	default:
+		// Default to Auto/Fallback mode
+		var geminiSvc SummarizerService
+		if cfg.GeminiAPIKey != "" {
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
+		}
+		ollamaSvc := NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
 	}
 }
 

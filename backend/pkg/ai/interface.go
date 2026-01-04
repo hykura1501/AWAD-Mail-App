@@ -26,5 +26,6 @@ type ProviderType string
 const (
 	ProviderGemini ProviderType = "gemini"
 	ProviderOllama ProviderType = "ollama"
+	ProviderAuto   ProviderType = "auto"
 )
 
