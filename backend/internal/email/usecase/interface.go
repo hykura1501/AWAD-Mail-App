@@ -32,6 +32,7 @@ type EmailUsecase interface {
 	GetSearchSuggestions(userID, query string, limit int) ([]string, error)
 	StoreEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
 	UpsertEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
+	SyncEmailToVectorDB(userID string, email *emaildomain.Email) // Sync a single email to vector DB
 	SyncAllEmailsForUser(userID string) // Sync all emails for a user to vector DB (async, non-blocking)
 	// Kanban Column Management
 	GetKanbanColumns(userID string) ([]*emaildomain.KanbanColumn, error)

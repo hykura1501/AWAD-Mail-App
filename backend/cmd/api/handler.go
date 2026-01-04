@@ -7,6 +7,9 @@ import (
 	emailDelivery "ga03-backend/internal/email/delivery"
 	emailRepo "ga03-backend/internal/email/repository"
 	emailUsecasePkg "ga03-backend/internal/email/usecase"
+	taskDelivery "ga03-backend/internal/task/delivery"
+	taskRepo "ga03-backend/internal/task/repository"
+	taskUsecasePkg "ga03-backend/internal/task/usecase"
 	"ga03-backend/pkg/ai"
 	"ga03-backend/pkg/chroma"
 	"ga03-backend/pkg/config"
@@ -18,12 +21,27 @@ import (
 type Handler struct {
 	authUsecase    authUsecase.AuthUsecase
 	emailUsecase   emailUsecasePkg.EmailUsecase
+	taskUsecase    taskUsecasePkg.TaskUsecase
 	sseManager     *sse.Manager
 	config         *config.Config
 	summaryHandler *emailDelivery.SummaryHandler
+	taskHandler    *taskDelivery.TaskHandler
 }
 
-func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUsecase, sseManager *sse.Manager, cfg *config.Config, summaryRepo emailRepo.EmailSummaryRepository) *Handler {
+// emailFetcherAdapter adapts EmailUsecase to TaskUsecase.EmailFetcher interface
+type emailFetcherAdapter struct {
+	emailUc emailUsecasePkg.EmailUsecase
+}
+
+func (a *emailFetcherAdapter) GetEmailByID(userID, id string) (subject, body string, err error) {
+	email, err := a.emailUc.GetEmailByID(userID, id)
+	if err != nil {
+		return "", "", err
+	}
+	return email.Subject, email.Body, nil
+}
+
+func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUsecase, taskUc taskUsecasePkg.TaskUsecase, sseManager *sse.Manager, cfg *config.Config, summaryRepo emailRepo.EmailSummaryRepository, taskRepository taskRepo.TaskRepository) *Handler {
 	// Initialize AI service with pluggable provider (Gemini/Ollama)
 	aiCfg := ai.Config{
 		Provider:      ai.ProviderType(cfg.AIProvider),
@@ -67,12 +85,24 @@ func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUse
 	// Create SummaryHandler
 	summaryHandler := emailDelivery.NewSummaryHandler(summaryWorker, emailUc)
 
+	// Set up Task Usecase with AI service and email fetcher
+	if aiService != nil {
+		taskUc.SetGeminiService(aiService)
+	}
+	taskUc.SetEmailFetcher(&emailFetcherAdapter{emailUc: emailUc})
+
+	// Create TaskHandler
+	taskHandler := taskDelivery.NewTaskHandler(taskUc)
+	log.Println("Task handler initialized")
+
 	return &Handler{
 		authUsecase:    authUc,
 		emailUsecase:   emailUc,
+		taskUsecase:    taskUc,
 		sseManager:     sseManager,
 		config:         cfg,
 		summaryHandler: summaryHandler,
+		taskHandler:    taskHandler,
 	}
 }
 
@@ -103,7 +133,8 @@ func (h *Handler) Start(addr string) error {
 	})
 
 	// Setup routes
-	SetupRoutes(r, h.authUsecase, h.emailUsecase, h.sseManager, h.config, h.summaryHandler)
+	SetupRoutes(r, h.authUsecase, h.emailUsecase, h.sseManager, h.config, h.summaryHandler, h.taskHandler)
 
 	return r.Run(addr)
 }
+

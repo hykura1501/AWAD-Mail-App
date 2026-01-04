@@ -5,6 +5,7 @@ import (
 	"fmt"
 	emaildomain "ga03-backend/internal/email/domain"
 	"ga03-backend/pkg/utils/crypto"
+	"log"
 	"regexp"
 	"strings"
 )
@@ -272,11 +273,11 @@ func (u *emailUsecase) GetSearchSuggestions(userID, query string, limit int) ([]
 	return suggestions, nil
 }
 
-// syncEmailToVectorDB syncs a single email to vector database asynchronously
+// SyncEmailToVectorDB syncs a single email to vector database asynchronously
 // This is called after fetching emails to ensure they are indexed for semantic search
 // Uses job worker pattern to process sync jobs with controlled concurrency
 // ALSO populates the suggestion cache for fast auto-suggest
-func (u *emailUsecase) syncEmailToVectorDB(userID string, email *emaildomain.Email) {
+func (u *emailUsecase) SyncEmailToVectorDB(userID string, email *emaildomain.Email) {
 	if email == nil {
 		return
 	}
@@ -285,11 +286,13 @@ func (u *emailUsecase) syncEmailToVectorDB(userID string, email *emaildomain.Ema
 	u.addToSuggestionCache(userID, email.FromName, email.Subject)
 
 	if u.vectorSearchService == nil {
+		log.Printf("[VectorSync] vectorSearchService is nil, skipping email %s", email.ID)
 		return
 	}
 
 	// Skip if email doesn't have subject or body
 	if email.Subject == "" && email.Body == "" {
+		log.Printf("[VectorSync] Email %s has no subject or body, skipping", email.ID)
 		return
 	}
 
@@ -307,10 +310,11 @@ func (u *emailUsecase) syncEmailToVectorDB(userID string, email *emaildomain.Ema
 	select {
 	case u.syncJobQueue <- job:
 		// Job enqueued successfully
+		log.Printf("[VectorSync] Enqueued sync job for email %s (subject: %s)", email.ID, email.Subject)
 	default:
 		// Queue is full, skip this sync to avoid blocking
 		// Emails will be synced when user fetches them again or queue has space
-		fmt.Printf("Sync job queue full, skipping email %s (will retry later)\n", email.ID)
+		log.Printf("[VectorSync] Queue full, skipping email %s (will retry later)", email.ID)
 	}
 }
 

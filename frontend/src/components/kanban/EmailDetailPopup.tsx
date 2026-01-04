@@ -1,5 +1,10 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import EmailDetail from "@/components/inbox/EmailDetail";
 import type { Theme } from "@/hooks/useTheme";
+import { taskService } from "@/services/task.service";
+import { ListTodo, Loader2, CheckCircle2, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 
 interface EmailDetailPopupProps {
   emailId: string;
@@ -20,6 +25,10 @@ export default function EmailDetailPopup({
   summary,
   isSummaryLoading = false,
 }: EmailDetailPopupProps) {
+  const navigate = useNavigate();
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractedCount, setExtractedCount] = useState<number | null>(null);
+
   /**
    * Render summary line with proper styling based on content type
    */
@@ -81,6 +90,34 @@ export default function EmailDetailPopup({
     ) : null;
   };
 
+  // Handle AI task extraction
+  const handleExtractTasks = async () => {
+    try {
+      setIsExtracting(true);
+      const response = await taskService.extractTasksFromEmail(emailId);
+      setExtractedCount(response.count);
+      
+      if (response.count > 0) {
+        toast.success(`Đã trích xuất ${response.count} task từ email!`, {
+          action: {
+            label: "Xem Tasks",
+            onClick: () => {
+              onClose();
+              navigate("/tasks");
+            },
+          },
+        });
+      } else {
+        toast.info("Email này không có task nào cần thực hiện.");
+      }
+    } catch (error) {
+      console.error("Error extracting tasks:", error);
+      toast.error("Không thể trích xuất task từ email.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
       <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col relative overflow-hidden border border-gray-200 dark:border-gray-800">
@@ -140,8 +177,64 @@ export default function EmailDetailPopup({
               )}
             </div>
           </div>
+
+          {/* AI Task Extraction Section */}
+          <div className="mt-4">
+            <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-100 dark:border-purple-800/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold text-purple-700 dark:text-purple-400">
+                  <ListTodo className="w-5 h-5" />
+                  Trích xuất Tasks từ Email
+                </div>
+                {extractedCount !== null && extractedCount > 0 && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      navigate("/tasks");
+                    }}
+                    className="flex items-center gap-1 text-sm text-purple-600 dark:text-purple-400 hover:underline"
+                  >
+                    Xem {extractedCount} tasks
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 mb-3">
+                Sử dụng AI để tự động phát hiện và tạo các task từ nội dung email.
+              </p>
+              {extractedCount !== null ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-green-500" />
+                  <span className="text-green-600 dark:text-green-400">
+                    {extractedCount > 0 
+                      ? `Đã trích xuất ${extractedCount} task thành công!`
+                      : "Email không có task nào cần thực hiện."}
+                  </span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleExtractTasks}
+                  disabled={isExtracting}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white rounded-lg font-medium transition-colors"
+                >
+                  {isExtracting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Đang trích xuất...
+                    </>
+                  ) : (
+                    <>
+                      <ListTodo className="w-4 h-4" />
+                      Trích xuất Tasks
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+

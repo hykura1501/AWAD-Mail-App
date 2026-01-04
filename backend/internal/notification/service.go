@@ -12,6 +12,9 @@ import (
 	"ga03-backend/pkg/gmail"
 	"ga03-backend/pkg/sse"
 
+	"ga03-backend/internal/email/usecase"
+
+
 	"cloud.google.com/go/pubsub"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
@@ -29,12 +32,15 @@ type Service struct {
 	fcmRepo      authrepo.FCMTokenRepository
 	fcmClient    *fcm.Client
 	gmailService *gmail.Service
+	emailUsecase usecase.EmailUsecase
 	projectID    string
 	topicName    string
 	subName      string
+	// Deduplication: track last historyId per user to avoid duplicate notifications
+	lastHistoryID map[string]uint64
 }
 
-func NewService(projectID, topicName string, sseManager *sse.Manager, userRepo authrepo.UserRepository, fcmRepo authrepo.FCMTokenRepository, fcmClient *fcm.Client, gmailService *gmail.Service, credentialsFile string) (*Service, error) {
+func NewService(projectID, topicName string, sseManager *sse.Manager, userRepo authrepo.UserRepository, fcmRepo authrepo.FCMTokenRepository, fcmClient *fcm.Client, gmailService *gmail.Service, emailUsecase usecase.EmailUsecase, credentialsFile string) (*Service, error) {
 	ctx := context.Background()
 	
 	var opts []option.ClientOption
@@ -48,15 +54,17 @@ func NewService(projectID, topicName string, sseManager *sse.Manager, userRepo a
 	}
 
 	return &Service{
-		pubsubClient: client,
-		sseManager:   sseManager,
-		userRepo:     userRepo,
-		fcmRepo:      fcmRepo,
-		fcmClient:    fcmClient,
-		gmailService: gmailService,
-		projectID:    projectID,
-		topicName:    topicName,
-		subName:      topicName + "-sub", // Convention: topic-sub
+		pubsubClient:  client,
+		sseManager:    sseManager,
+		userRepo:      userRepo,
+		fcmRepo:       fcmRepo,
+		fcmClient:     fcmClient,
+		gmailService:  gmailService,
+		emailUsecase:  emailUsecase,
+		projectID:     projectID,
+		topicName:     topicName,
+		subName:       topicName + "-sub", // Convention: topic-sub
+		lastHistoryID: make(map[string]uint64),
 	}, nil
 }
 
@@ -116,7 +124,7 @@ func (s *Service) handleMessage(ctx context.Context, msg *pubsub.Message) {
 		return
 	}
 
-	log.Printf("Received notification for: %s", notification.EmailAddress)
+	log.Printf("[PubSub] Received notification for: %s (historyId: %d)", notification.EmailAddress, notification.HistoryID)
 
 	// Find user by email
 	user, err := s.userRepo.FindByEmail(notification.EmailAddress)
@@ -128,6 +136,14 @@ func (s *Service) handleMessage(ctx context.Context, msg *pubsub.Message) {
 		log.Printf("User not found for email: %s", notification.EmailAddress)
 		return
 	}
+
+	// Deduplication: Skip if we already processed this historyId for this user
+	lastHID, exists := s.lastHistoryID[user.ID]
+	if exists && notification.HistoryID <= lastHID {
+		log.Printf("[PubSub] Skipping duplicate notification for user %s (historyId %d <= last %d)", user.ID, notification.HistoryID, lastHID)
+		return
+	}
+	s.lastHistoryID[user.ID] = notification.HistoryID
 
 	// Notify user via SSE
 	s.sseManager.SendToUser(user.ID, "email_update", map[string]interface{}{
@@ -200,6 +216,12 @@ func (s *Service) handleMessage(ctx context.Context, msg *pubsub.Message) {
 							body = "(Không có tiêu đề)"
 						}
 						log.Printf("[FCM] Got email details - From: %s, Subject: %s, ID: %s", senderName, subject, messageID)
+
+						// SYNC TO CHROME DB: Ensure this new email is indexed for semantic search
+						if s.emailUsecase != nil {
+							go s.emailUsecase.SyncEmailToVectorDB(user.ID, latestEmail)
+							log.Printf("[PubSub] Triggered async vector sync for email %s", messageID)
+						}
 					} else {
 						log.Printf("[FCM] Could not fetch email details (using generic message): %v", err)
 					}
@@ -213,7 +235,7 @@ func (s *Service) handleMessage(ctx context.Context, msg *pubsub.Message) {
 						"email":        notification.EmailAddress,
 						"historyId":    fmt.Sprintf("%d", notification.HistoryID),
 						"messageId":    messageID,
-						"click_action": "/inbox",
+						"click_action": s.buildEmailClickAction(messageID),
 					},
 				})
 				
@@ -237,4 +259,12 @@ func (s *Service) handleMessage(ctx context.Context, msg *pubsub.Message) {
 	} else {
 		log.Printf("[FCM] FCM client or repo not available (client=%v, repo=%v)", s.fcmClient != nil, s.fcmRepo != nil)
 	}
+}
+
+// buildEmailClickAction returns the URL path for opening a specific email
+func (s *Service) buildEmailClickAction(messageID string) string {
+	if messageID == "" {
+		return "/inbox"
+	}
+	return fmt.Sprintf("/inbox/%s", messageID)
 }

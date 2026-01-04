@@ -41,21 +41,36 @@ if (config.apiKey && config.projectId && config.messagingSenderId && config.appI
     console.log('[firebase-messaging-sw.js] Notification click Received.', event);
     event.notification.close();
 
-    const link = event.notification.data?.click_action || event.notification.data?.link || '/inbox';
+    // Get the click action URL from notification data
+    const clickAction = event.notification.data?.click_action || '/inbox';
+    const messageId = event.notification.data?.messageId;
+    
+    // Determine the target URL
+    let targetUrl = clickAction;
+    
+    // If we have a messageId but click_action doesn't include it, construct the URL
+    if (messageId && !clickAction.includes(messageId)) {
+      targetUrl = `/inbox/${messageId}`;
+    }
+
+    console.log('[firebase-messaging-sw.js] Navigating to:', targetUrl);
 
     event.waitUntil(
-      clients.matchAll({type: 'window'}).then(windowClients => {
-        // Check if there is already a window/tab open with the target URL
-        for (var i = 0; i < windowClients.length; i++) {
-          var client = windowClients[i];
-          // If so, just focus it.
-          if (client.url.includes(link) && 'focus' in client) {
-            return client.focus();
+      clients.matchAll({type: 'window', includeUncontrolled: true}).then(windowClients => {
+        // Look for an existing window with our app
+        for (let i = 0; i < windowClients.length; i++) {
+          const client = windowClients[i];
+          // If there's an existing window, navigate it to the new URL
+          if ('focus' in client && 'navigate' in client) {
+            return client.focus().then(focusedClient => {
+              // Navigate to the email URL
+              return focusedClient.navigate(targetUrl);
+            });
           }
         }
-        // If not, then open the target URL in a new window/tab.
+        // If no window found, open a new one
         if (clients.openWindow) {
-          return clients.openWindow(link);
+          return clients.openWindow(targetUrl);
         }
       })
     );

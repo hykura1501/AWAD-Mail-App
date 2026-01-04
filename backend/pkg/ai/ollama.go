@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
+	"time"
 )
 
 // OllamaService implements SummarizerService using Ollama local LLM
@@ -100,3 +103,146 @@ TÓM TẮT:`, emailText)
 
 	return result.Response, nil
 }
+
+// ExtractTasksFromEmail implements SummarizerService for task extraction
+func (o *OllamaService) ExtractTasksFromEmail(ctx context.Context, emailText string) ([]TaskExtraction, error) {
+	url := o.BaseURL + "/api/generate"
+
+	currentDate := time.Now().Format("2006-01-02")
+
+	prompt := fmt.Sprintf(`Bạn là trợ lý AI chuyên phân tích email để trích xuất các TASK/VIỆC CẦN LÀM.
+
+NGÀY HÔM NAY: %s
+
+HƯỚNG DẪN:
+1. Đọc email và tìm TẤT CẢ các việc cần làm, deadline, cuộc họp, reminder
+2. Trả về danh sách tasks dưới dạng JSON array
+3. Mỗi task cần có: title (bắt buộc), description, due_date (ISO 8601 format nếu có), priority (high/medium/low)
+4. Nếu email không có task nào, trả về mảng rỗng []
+5. Priority: 
+   - high: deadline gấp (trong 24h), urgent, important
+   - medium: deadline vài ngày, cần làm sớm
+   - low: không gấp, FYI
+
+CHỈ trả về JSON array, KHÔNG có text khác.
+
+EMAIL:
+%s
+
+JSON OUTPUT:`, currentDate, emailText)
+
+	payload := map[string]interface{}{
+		"model":  o.Model,
+		"prompt": prompt,
+		"stream": false,
+		"options": map[string]interface{}{
+			"temperature": 0.2,
+			"num_predict": 500,
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Response string `json:"response"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Extract JSON from response
+	responseText := strings.TrimSpace(result.Response)
+	jsonStart := strings.Index(responseText, "[")
+	jsonEnd := strings.LastIndex(responseText, "]")
+	if jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart {
+		responseText = responseText[jsonStart : jsonEnd+1]
+	}
+
+	var rawTasks []struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		DueDate     string `json:"due_date"`
+		Priority    string `json:"priority"`
+	}
+
+	if err := json.Unmarshal([]byte(responseText), &rawTasks); err != nil {
+		return nil, fmt.Errorf("failed to parse task JSON: %v", err)
+	}
+
+	var tasks []TaskExtraction
+	for _, rt := range rawTasks {
+		if rt.Title == "" {
+			continue
+		}
+
+		task := TaskExtraction{
+			Title:       rt.Title,
+			Description: rt.Description,
+			Priority:    rt.Priority,
+		}
+
+		if task.Priority == "" {
+			task.Priority = "medium"
+		}
+
+		if rt.DueDate != "" {
+			formats := []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02"}
+			for _, format := range formats {
+				if t, err := time.Parse(format, rt.DueDate); err == nil {
+					task.DueDate = &t
+					break
+				}
+			}
+			if task.DueDate == nil {
+				task.DueDate = parseRelativeDate(rt.DueDate)
+			}
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// parseRelativeDate attempts to parse relative date expressions
+func parseRelativeDate(dateStr string) *time.Time {
+	now := time.Now()
+	dateStr = strings.ToLower(dateStr)
+
+	if matched, _ := regexp.MatchString(`(tomorrow|ngày mai)`, dateStr); matched {
+		t := now.AddDate(0, 0, 1)
+		return &t
+	}
+	if matched, _ := regexp.MatchString(`(next week|tuần sau|tuần tới)`, dateStr); matched {
+		t := now.AddDate(0, 0, 7)
+		return &t
+	}
+
+	return nil
+}
+

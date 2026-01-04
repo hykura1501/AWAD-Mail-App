@@ -4,6 +4,7 @@ import LoginPage from "@/pages/LoginPage";
 import SignUpPage from "@/pages/SignUpPage";
 import InboxPage from "@/pages/InboxPage";
 import KanbanPage from "@/pages/KanbanPage";
+import TaskPage from "@/pages/TaskPage";
 import SetPasswordPage from "@/pages/SetPasswordPage";
 import PrivacyPolicyPage from "@/pages/PrivacyPolicyPage";
 import TermsOfServicePage from "@/pages/TermsOfServicePage";
@@ -31,6 +32,14 @@ export const router = createBrowserRouter([
     element: (
       <PrivateRoute>
         <KanbanPage />
+      </PrivateRoute>
+    ),
+  },
+  {
+    path: "/tasks",
+    element: (
+      <PrivateRoute>
+        <TaskPage />
       </PrivateRoute>
     ),
   },

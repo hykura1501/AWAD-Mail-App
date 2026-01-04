@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"fmt"
 
 	"ga03-backend/pkg/gemini"
@@ -18,6 +19,34 @@ type Config struct {
 	OllamaModel   string // e.g., "llama3", "mistral"
 }
 
+// GeminiAdapter wraps gemini.GeminiService to implement SummarizerService
+type GeminiAdapter struct {
+	service *gemini.GeminiService
+}
+
+func (g *GeminiAdapter) SummarizeEmail(ctx context.Context, emailText string) (string, error) {
+	return g.service.SummarizeEmail(ctx, emailText)
+}
+
+func (g *GeminiAdapter) ExtractTasksFromEmail(ctx context.Context, emailText string) ([]TaskExtraction, error) {
+	geminiTasks, err := g.service.ExtractTasksFromEmail(ctx, emailText)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert gemini.TaskExtraction to ai.TaskExtraction
+	tasks := make([]TaskExtraction, len(geminiTasks))
+	for i, gt := range geminiTasks {
+		tasks[i] = TaskExtraction{
+			Title:       gt.Title,
+			Description: gt.Description,
+			DueDate:     gt.DueDate,
+			Priority:    gt.Priority,
+		}
+	}
+	return tasks, nil
+}
+
 // NewSummarizerService creates a SummarizerService based on the config
 // This is the factory function - switch AI provider by changing config.Provider
 func NewSummarizerService(cfg Config) (SummarizerService, error) {
@@ -26,7 +55,7 @@ func NewSummarizerService(cfg Config) (SummarizerService, error) {
 		if cfg.GeminiAPIKey == "" {
 			return nil, fmt.Errorf("GEMINI_API_KEY is required for Gemini provider")
 		}
-		return gemini.NewGeminiService(cfg.GeminiAPIKey), nil
+		return &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}, nil
 		
 	case ProviderOllama:
 		return NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel), nil
@@ -34,8 +63,9 @@ func NewSummarizerService(cfg Config) (SummarizerService, error) {
 	default:
 		// Default to Gemini if API key is available, otherwise Ollama
 		if cfg.GeminiAPIKey != "" {
-			return gemini.NewGeminiService(cfg.GeminiAPIKey), nil
+			return &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}, nil
 		}
 		return NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel), nil
 	}
 }
+

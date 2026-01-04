@@ -109,23 +109,27 @@ func (u *emailUsecase) startSyncWorkers(workerCount int) {
 // syncWorker processes email sync jobs from the queue
 func (u *emailUsecase) syncWorker(workerID int) {
 	defer u.workerWg.Done()
+	log.Printf("[VectorSync] Worker %d started", workerID)
 
 	for job := range u.syncJobQueue {
 		if u.vectorSearchService == nil {
+			log.Printf("[VectorSync] Worker %d: vectorSearchService is nil", workerID)
 			continue
 		}
 
-		// Check if email has already been synced (atomic upsert)
-		wasAlreadySynced, err := u.emailSyncHistoryRepo.EnsureEmailSynced(job.UserID, job.EmailID)
+		// Check if email has already been synced (read-only check, doesn't insert)
+		alreadySynced, err := u.emailSyncHistoryRepo.IsEmailSynced(job.UserID, job.EmailID)
 		if err != nil {
-			// Silent fail - no need to spam logs for sync history errors
+			log.Printf("[VectorSync] Worker %d: Error checking sync status for %s: %v", workerID, job.EmailID, err)
 			continue
 		}
 
-		if wasAlreadySynced {
-			// Email already synced, skip silently
+		if alreadySynced {
+			// Email already synced, skip silently (don't log to avoid spam)
 			continue
 		}
+
+		log.Printf("[VectorSync] Worker %d: Syncing email %s to vector DB", workerID, job.EmailID)
 
 		// Email not synced yet, upsert to vector DB
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -133,8 +137,16 @@ func (u *emailUsecase) syncWorker(workerID int) {
 		cancel()
 
 		if err != nil {
-			// Only log actual embedding errors
-			log.Printf("[VectorSync] Failed to sync email %s: %v", job.EmailID, err)
+			// Log embedding error - will retry next time email is fetched
+			log.Printf("[VectorSync] Worker %d: Failed to sync email %s: %v", workerID, job.EmailID, err)
+			continue // Don't mark as synced so it can retry
+		}
+
+		// Mark as synced ONLY after successful embedding
+		if markErr := u.emailSyncHistoryRepo.MarkEmailAsSynced(job.UserID, job.EmailID); markErr != nil {
+			log.Printf("[VectorSync] Worker %d: Failed to mark email %s as synced: %v", workerID, job.EmailID, markErr)
+		} else {
+			log.Printf("[VectorSync] Worker %d: Successfully synced email %s", workerID, job.EmailID)
 		}
 	}
 }
@@ -400,7 +412,7 @@ func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offse
 	if err == nil {
 		// Sync emails to vector DB asynchronously (don't block the request)
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 	}
 	return emails, total, err
@@ -438,7 +450,7 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 		email, err := u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
 		if err == nil && email != nil {
 			// Sync email to vector DB asynchronously
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 		return email, err
 	}
@@ -458,7 +470,7 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 	email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 	if err == nil && email != nil {
 		// Sync email to vector DB asynchronously
-		u.syncEmailToVectorDB(userID, email)
+		u.SyncEmailToVectorDB(userID, email)
 	}
 	return email, err
 }
@@ -870,7 +882,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 		// Sync emails to vector DB asynchronously
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
 		var filtered []*emaildomain.Email
@@ -926,7 +938,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 		// Sync emails to vector DB asynchronously
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
 		// Exclude snoozed emails from this column
@@ -994,7 +1006,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 	// Sync emails to vector DB asynchronously
 	for _, email := range emails {
-		u.syncEmailToVectorDB(userID, email)
+		u.SyncEmailToVectorDB(userID, email)
 	}
 
 	// Check if this is a default column or custom column
@@ -1431,7 +1443,7 @@ func (u *emailUsecase) syncMailboxEmails(userID, mailboxID string) {
 		// Note: GetEmailsByMailbox already calls syncEmailToVectorDB, but we want to ensure
 		// all emails are synced even if they were fetched before
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
 		log.Printf("Synced %d emails from mailbox %s for user %s (offset %d/%d)", len(emails), mailboxID, userID, offset, total)

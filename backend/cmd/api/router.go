@@ -5,6 +5,7 @@ import (
 	authUsecase "ga03-backend/internal/auth/usecase"
 	emailDelivery "ga03-backend/internal/email/delivery"
 	emailUsecase "ga03-backend/internal/email/usecase"
+	taskDelivery "ga03-backend/internal/task/delivery"
 	"ga03-backend/pkg/config"
 	"ga03-backend/pkg/sse"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config, summaryHandler *emailDelivery.SummaryHandler) {
+func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config, summaryHandler *emailDelivery.SummaryHandler, taskHandler *taskDelivery.TaskHandler) {
 	authHandler := delivery.NewAuthHandler(authUsecase)
 	emailHandler := emailDelivery.NewEmailHandler(emailUsecase)
 
@@ -95,5 +96,21 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 			kanban.PUT("/columns/orders", emailHandler.UpdateKanbanColumnOrders)
 			kanban.POST("/summarize", summaryHandler.QueueSummaries) // Background AI summary generation
 		}
+
+		// Task routes (protected) - AI task extraction and management
+		if taskHandler != nil {
+			tasks := api.Group("/tasks")
+			tasks.Use(delivery.AuthMiddleware(authUsecase))
+			{
+				tasks.GET("", taskHandler.GetTasks)
+				tasks.POST("", taskHandler.CreateTask)
+				tasks.GET("/:id", taskHandler.GetTaskByID)
+				tasks.PUT("/:id", taskHandler.UpdateTask)
+				tasks.DELETE("/:id", taskHandler.DeleteTask)
+				tasks.PATCH("/:id/status", taskHandler.UpdateTaskStatus)
+				tasks.POST("/extract/:emailId", taskHandler.ExtractTasksFromEmail)
+			}
+		}
 	}
 }
+
