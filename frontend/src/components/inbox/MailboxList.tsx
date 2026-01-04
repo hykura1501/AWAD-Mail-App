@@ -1,17 +1,10 @@
-import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAppSelector } from "@/store/hooks";
 import { emailService } from "@/services/email.service";
 import type { Mailbox } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import AccountMenu from "@/components/common/AccountMenu";
 
 interface MailboxListProps {
   selectedMailboxId: string | null;
@@ -111,26 +104,11 @@ export default function MailboxList({
   onToggleTheme,
 }: MailboxListProps) {
   const user = useAppSelector((state) => state.auth.user);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   const { data: mailboxes = [], isLoading } = useQuery({
     queryKey: ["mailboxes"],
     queryFn: emailService.getAllMailboxes,
   });
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsUserMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
 
   if (isLoading) {
     return (
@@ -147,122 +125,18 @@ export default function MailboxList({
     );
   }
 
-  const shortcuts = [
-    { key: "j / ↓", action: "Email tiếp theo" },
-    { key: "k / ↑", action: "Email trước" },
-    { key: "Enter", action: "Mở email" },
-    { key: "Delete", action: "Xóa email" },
-    { key: "s", action: "Gắn/bỏ sao" },
-    { key: "r", action: "Đã đọc/chưa đọc" },
-    { key: "Esc", action: "Bỏ chọn" },
-  ];
-
   return (
     <aside className="flex h-full w-full flex-col bg-gray-50 dark:bg-[#111418] p-3 shrink-0 transition-colors duration-200">
       {/* User Profile & Menu */}
-      <div className="relative shrink-0" ref={menuRef}>
-        <Button
-          variant="ghost"
-          onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-          className="flex items-center justify-between gap-2 w-full hover:bg-gray-200 dark:hover:bg-white/5 p-1.5 h-auto rounded-lg transition-colors text-left group shadow-none"
-        >
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <div
-              className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-8 shrink-0"
-              style={{
-                backgroundImage: `url("${
-                  user?.avatar_url ||
-                  "https://lh3.googleusercontent.com/aida-public/AB6AXuDRNQSlv4je28jMHI0WjXZhE5xKv7aSQKNqKhtFzfV3noDp7AgOUk9Hz5vby11yRlctZmQJOUwfeApOcQV9Yt"
-                }")`,
-              }}
-            ></div>
-            <div className="flex flex-col min-w-0 items-start flex-1">
-              <h1 className="text-gray-900 dark:text-white text-sm font-medium leading-normal truncate w-full">
-                {user?.name || "Email Client AI"}
-              </h1>
-              <p
-                className="text-gray-500 dark:text-[#9dabb9] text-xs font-normal leading-normal truncate w-full"
-                title={user?.email || "user@email.com"}
-              >
-                {user?.email || "user@email.com"}
-              </p>
-            </div>
-          </div>
-          <span className="material-symbols-outlined text-gray-500 group-hover:text-gray-900 dark:group-hover:text-white transition-colors text-lg shrink-0">
-            expand_more
-          </span>
-        </Button>
-
-        {/* Dropdown Menu */}
-        {isUserMenuOpen && (
-          <div className="absolute top-full left-0 w-full mt-1 bg-white dark:bg-[#283039] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-            <Button
-              variant="ghost"
-              onClick={onToggleTheme}
-              className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
-            >
-              <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
-                {theme === "dark" ? "light_mode" : "dark_mode"}
-              </span>
-              <span>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowShortcuts(true);
-                setIsUserMenuOpen(false);
-              }}
-              className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
-            >
-              <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
-                keyboard
-              </span>
-              <span>Phím tắt</span>
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => toast.info("Tính năng đang phát triển")}
-              className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
-            >
-              <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg">
-                settings
-              </span>
-              <span>Cài đặt</span>
-            </Button>
-            <div className="h-px bg-gray-200 dark:bg-gray-700 mx-2"></div>
-            <Button
-              variant="ghost"
-              onClick={onLogout}
-              className="w-full px-3 py-2 justify-start h-auto text-left text-red-500 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
-            >
-              <span className="material-symbols-outlined text-lg">logout</span>
-              <span>Đăng xuất</span>
-            </Button>
-          </div>
-        )}
+      <div className="shrink-0">
+        <AccountMenu
+          user={user}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          onLogout={onLogout || (() => {})}
+          showFullProfile={true}
+        />
       </div>
-
-      {/* Keyboard Shortcuts Dialog */}
-      <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
-        <DialogContent className="max-w-[240px] p-4">
-          <DialogHeader className="pb-3">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <span className="material-symbols-outlined text-xl">keyboard</span>
-              Phím tắt
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            {shortcuts.map((s) => (
-              <div key={s.key} className="flex justify-between items-center text-sm">
-                <span className="text-gray-600 dark:text-gray-400">{s.action}</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
-                  {s.key}
-                </kbd>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Mailbox List */}
       <div className="flex flex-col gap-0.5 mt-3 flex-1 overflow-y-auto min-h-0 scrollbar-thin">

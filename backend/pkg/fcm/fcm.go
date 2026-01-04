@@ -52,21 +52,23 @@ type NotificationData struct {
 
 // SendToDevice sends a push notification to a specific device token
 func (c *Client) SendToDevice(ctx context.Context, token string, notification NotificationData) error {
+	// Build data payload - include title/body for service worker to read
+	data := notification.Data
+	if data == nil {
+		data = make(map[string]string)
+	}
+	data["title"] = notification.Title
+	data["body"] = notification.Body
+	if notification.ImageURL != "" {
+		data["image"] = notification.ImageURL
+	}
+
+	// Send data-only message - no Notification field
+	// This prevents FCM from auto-showing notifications
+	// The service worker will handle display via onBackgroundMessage
 	message := &messaging.Message{
 		Token: token,
-		Notification: &messaging.Notification{
-			Title:    notification.Title,
-			Body:     notification.Body,
-			ImageURL: notification.ImageURL,
-		},
-		Data: notification.Data,
-		Webpush: &messaging.WebpushConfig{
-			Notification: &messaging.WebpushNotification{
-				Title: notification.Title,
-				Body:  notification.Body,
-				Icon:  "/icon-192.svg",
-			},
-		},
+		Data:  data,
 	}
 
 	response, err := c.messagingClient.Send(ctx, message)
@@ -85,21 +87,23 @@ func (c *Client) SendToDevices(ctx context.Context, tokens []string, notificatio
 		return nil, nil
 	}
 
+	// Build data payload - include title/body for service worker to read
+	data := notification.Data
+	if data == nil {
+		data = make(map[string]string)
+	}
+	data["title"] = notification.Title
+	data["body"] = notification.Body
+	if notification.ImageURL != "" {
+		data["image"] = notification.ImageURL
+	}
+
+	// Send data-only message - no Notification field
+	// This prevents FCM from auto-showing notifications
+	// The service worker will handle display via onBackgroundMessage
 	message := &messaging.MulticastMessage{
 		Tokens: tokens,
-		Notification: &messaging.Notification{
-			Title:    notification.Title,
-			Body:     notification.Body,
-			ImageURL: notification.ImageURL,
-		},
-		Data: notification.Data,
-		Webpush: &messaging.WebpushConfig{
-			Notification: &messaging.WebpushNotification{
-				Title: notification.Title,
-				Body:  notification.Body,
-				Icon:  "/icon-192.svg",
-			},
-		},
+		Data:   data,
 	}
 
 	response, err := c.messagingClient.SendEachForMulticast(ctx, message)

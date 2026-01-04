@@ -26,11 +26,13 @@ if (config.apiKey && config.projectId && config.messagingSenderId && config.appI
   messaging.onBackgroundMessage((payload) => {
     console.log('[firebase-messaging-sw.js] Received background message ', payload);
     
-    // Customize notification handling here
-    const notificationTitle = payload.notification?.title || 'New Email';
+    // Read from data payload (we send data-only messages to prevent duplicates)
+    // Fallback to notification field for backwards compatibility
+    const notificationTitle = payload.data?.title || payload.notification?.title || 'New Email';
     const notificationOptions = {
-      body: payload.notification?.body || 'You have a new email',
+      body: payload.data?.body || payload.notification?.body || 'You have a new email',
       icon: '/icon-192.svg',
+      image: payload.data?.image,
       data: payload.data
     };
 
