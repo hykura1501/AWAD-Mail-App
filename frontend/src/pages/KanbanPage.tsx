@@ -19,6 +19,7 @@ import EmailDetailPopup from "@/components/kanban/EmailDetailPopup";
 import KanbanCardActions from "@/components/kanban/KanbanCardActions";
 import MobileColumnTabs from "@/components/kanban/MobileColumnTabs";
 import MobileEmailCard from "@/components/kanban/MobileEmailCard";
+import { TaskDrawer } from "@/components/tasks";
 
 import { useTheme, useSSE, useFCM, useKanbanSnooze, useKanbanData, useKanbanSummaries } from "@/hooks";
 
@@ -56,6 +57,9 @@ export default function KanbanPage() {
 
   // Snoozed drawer state
   const [isSnoozedDrawerOpen, setIsSnoozedDrawerOpen] = useState(false);
+
+  // Task drawer state
+  const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
 
   // Kanban Data Hook - handles column loading, caching, pagination
   const {
@@ -231,7 +235,7 @@ export default function KanbanPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-[#111418] text-gray-900 dark:text-white overflow-hidden font-sans transition-colors duration-200">
       {/* Header */}
-      <KanbanHeader user={user} onMenuClick={() => setMobileView("mailbox")} />
+      <KanbanHeader user={user} onMenuClick={() => setMobileView("mailbox")} onOpenTaskDrawer={() => setIsTaskDrawerOpen(true)} />
 
       {/* Filter Bar */}
       <KanbanToolbar
@@ -474,6 +478,7 @@ export default function KanbanPage() {
         <EmailDetailPopup
           emailId={detailEmailId}
           onClose={() => setDetailEmailId(null)}
+          onOpenTaskDrawer={() => setIsTaskDrawerOpen(true)}
           theme={theme}
           summary={summary}
           isSummaryLoading={isSummaryLoading}
@@ -579,6 +584,9 @@ export default function KanbanPage() {
         limit={limit}
         onPageChange={(dir) => handleKanbanPage("snoozed", dir)}
       />
+
+      {/* Task Drawer */}
+      <TaskDrawer isOpen={isTaskDrawerOpen} onClose={() => setIsTaskDrawerOpen(false)} />
     </div>
   );
 }

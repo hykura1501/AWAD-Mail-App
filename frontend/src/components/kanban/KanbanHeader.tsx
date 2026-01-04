@@ -6,9 +6,10 @@ import type { User } from "@/types/auth";
 interface KanbanHeaderProps {
   user: User | null;
   onMenuClick: () => void;
+  onOpenTaskDrawer?: () => void;
 }
 
-export default function KanbanHeader({ user, onMenuClick }: KanbanHeaderProps) {
+export default function KanbanHeader({ user, onMenuClick, onOpenTaskDrawer }: KanbanHeaderProps) {
   const navigate = useNavigate();
 
   return (
@@ -40,8 +41,10 @@ export default function KanbanHeader({ user, onMenuClick }: KanbanHeaderProps) {
         <AccountMenu
           user={user}
           showFullProfile={false}
+          onNavigateToTasks={onOpenTaskDrawer}
         />
       </div>
     </div>
   );
 }
+

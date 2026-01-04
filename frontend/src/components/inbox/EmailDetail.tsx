@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
 import { format } from "date-fns";
@@ -17,6 +17,7 @@ interface EmailDetailProps {
     onReply?: (email: Email) => void;
     onReplyAll?: (email: Email) => void;
     onForward?: (email: Email) => void;
+    onExtractTask?: () => void;
     theme: "light" | "dark";
 }
 
@@ -25,10 +26,12 @@ export default function EmailDetail({
                                         onReply,
                                         onReplyAll,
                                         onForward,
+                                        onExtractTask,
                                         theme,
                                     }: EmailDetailProps) {
     const queryClient = useQueryClient();
     const { user } = useAppSelector((state) => state.auth);
+    const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
     
     // Track which emails we've already marked as read to avoid duplicate API calls
     const markedAsReadRef = useRef<Set<string>>(new Set());
@@ -552,17 +555,43 @@ export default function EmailDetail({
                       reply
                     </span>
                                     </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 rounded-full"
-                                        title="Khác"
-                                        onClick={() => toast.info("Tính năng đang phát triển")}
-                                    >
-                    <span className="material-symbols-outlined text-[18px]">
-                      more_vert
-                    </span>
-                                    </Button>
+                                    <div className="relative">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 rounded-full"
+                                            title="Khác"
+                                            onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+                                        >
+                                            <span className="material-symbols-outlined text-[18px]">
+                                                more_vert
+                                            </span>
+                                        </Button>
+                                        {isMoreMenuOpen && (
+                                            <>
+                                                <div
+                                                    className="fixed inset-0 z-40"
+                                                    onClick={() => setIsMoreMenuOpen(false)}
+                                                />
+                                                <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-[#283039] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden">
+                                                    <button
+                                                        onClick={() => {
+                                                            if (onExtractTask) {
+                                                                onExtractTask();
+                                                            } else {
+                                                                toast.info("Trích xuất task chỉ khả dụng khi xem chi tiết email");
+                                                            }
+                                                            setIsMoreMenuOpen(false);
+                                                        }}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[18px]">task</span>
+                                                        Trích xuất Tasks
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         </div>

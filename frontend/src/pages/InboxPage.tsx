@@ -11,6 +11,7 @@ import ComposeEmail from "@/components/inbox/ComposeEmail";
 import SearchBar from "@/components/search/SearchBar";
 import { useQueryClient } from "@tanstack/react-query";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
+import { TaskDrawer } from "@/components/tasks";
 import { useTheme, useSSE, useFCM, useEmailActions } from "@/hooks";
 import { SEARCH_MODES, type SearchMode } from "@/constants";
 
@@ -46,6 +47,9 @@ export default function InboxPage() {
 
   // Theme is still used for EmailDetail component
   const { theme } = useTheme();
+
+  // Task drawer state
+  const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
 
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
@@ -135,7 +139,7 @@ export default function InboxPage() {
           />
         </div>
 
-        <KanbanToggle isKanban={false} onToggle={() => navigate("/kanban")} />
+          <KanbanToggle isKanban={false} onToggle={() => navigate("/kanban")} />
       </div>
 
       {/* Main Content Area */}
@@ -148,6 +152,7 @@ export default function InboxPage() {
               selectedMailboxId={headerSearchQuery ? null : selectedMailboxId}
               onSelectMailbox={handleSelectMailbox}
               onComposeClick={() => setIsComposeOpen(true)}
+              onNavigateToTasks={() => setIsTaskDrawerOpen(true)}
             />
           </div>
           {/* Column 2: Email List */}
@@ -293,6 +298,9 @@ export default function InboxPage() {
         quotedContent={composeData.quotedContent}
         quotedHeader={composeData.quotedHeader}
       />
+
+      {/* Task Drawer */}
+      <TaskDrawer isOpen={isTaskDrawerOpen} onClose={() => setIsTaskDrawerOpen(false)} />
     </div>
   );
 }

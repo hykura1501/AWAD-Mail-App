@@ -8,9 +8,9 @@ import { toast } from 'sonner';
 let fcmInitialized = false;
 let messageListenerRegistered = false;
 
-// Cross-tab deduplication using localStorage with claim-based locking
+// Cross-tab and cross-refresh deduplication using localStorage
 const NOTIFICATION_STORAGE_KEY = 'fcm_shown_notifications';
-const NOTIFICATION_DEDUP_WINDOW_MS = 10000; // 10 seconds
+const NOTIFICATION_DEDUP_WINDOW_MS = 60000; // 60 seconds - survive page refresh
 
 // Generate a unique ID for this tab instance
 const TAB_ID = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -21,21 +21,45 @@ interface NotificationClaim {
 }
 
 /**
+ * Clean up old notification entries from localStorage
+ */
+const cleanupOldNotifications = () => {
+  try {
+    const now = Date.now();
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(NOTIFICATION_STORAGE_KEY)) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const claim: NotificationClaim = JSON.parse(raw);
+          if ((now - claim.claimedAt) > NOTIFICATION_DEDUP_WINDOW_MS) {
+            localStorage.removeItem(key);
+          }
+        }
+      }
+    }
+  } catch { /* ignore cleanup errors */ }
+};
+
+/**
  * Try to claim the right to show a notification.
  * Uses a claim-then-verify pattern to handle race conditions.
  * Returns true if this tab should show the notification.
  */
 const tryClaimNotification = async (notificationId: string): Promise<boolean> => {
   try {
+    // Cleanup old entries first
+    cleanupOldNotifications();
+    
     const storageKey = `${NOTIFICATION_STORAGE_KEY}_${notificationId}`;
     
-    // First, check if already claimed by another tab
+    // First, check if already claimed (even by previous instance of this tab after refresh)
     const existing = localStorage.getItem(storageKey);
     if (existing) {
       const claim: NotificationClaim = JSON.parse(existing);
       // If claimed recently (within dedup window), don't show
       if ((Date.now() - claim.claimedAt) < NOTIFICATION_DEDUP_WINDOW_MS) {
-        console.log(`[FCM] Notification ${notificationId} already claimed by tab ${claim.claimedBy}`);
+        console.log(`[FCM] Notification ${notificationId} already shown recently (claimed at ${new Date(claim.claimedAt).toISOString()})`);
         return false;
       }
     }
@@ -61,12 +85,6 @@ const tryClaimNotification = async (notificationId: string): Promise<boolean> =>
     const verifyClaim: NotificationClaim = JSON.parse(verifyRaw);
     if (verifyClaim.claimedBy === TAB_ID) {
       console.log(`[FCM] Successfully claimed notification ${notificationId}`);
-      // Schedule cleanup
-      setTimeout(() => {
-        try {
-          localStorage.removeItem(storageKey);
-        } catch { /* ignore */ }
-      }, NOTIFICATION_DEDUP_WINDOW_MS);
       return true;
     } else {
       console.log(`[FCM] Lost claim race for ${notificationId} to tab ${verifyClaim.claimedBy}`);

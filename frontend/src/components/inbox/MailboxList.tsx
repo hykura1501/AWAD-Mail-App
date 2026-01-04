@@ -10,6 +10,7 @@ interface MailboxListProps {
   selectedMailboxId: string | null;
   onSelectMailbox: (id: string) => void;
   onComposeClick?: () => void;
+  onNavigateToTasks?: () => void;
 }
 
 const getMailboxIconName = (type: string) => {
@@ -96,6 +97,7 @@ export default function MailboxList({
   selectedMailboxId,
   onSelectMailbox,
   onComposeClick,
+  onNavigateToTasks,
 }: MailboxListProps) {
   const user = useAppSelector((state) => state.auth.user);
 
@@ -126,6 +128,7 @@ export default function MailboxList({
         <AccountMenu
           user={user}
           showFullProfile={true}
+          onNavigateToTasks={onNavigateToTasks}
         />
       </div>
 
