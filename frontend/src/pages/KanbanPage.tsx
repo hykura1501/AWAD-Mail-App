@@ -1,13 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { logout } from "@/store/authSlice";
-import { authService } from "@/services/auth.service";
+import { useAppSelector } from "@/store/hooks";
 import { emailService } from "@/services/email.service";
 import type { Email, KanbanColumnConfig, Mailbox } from "@/types/email";
 import MailboxList from "@/components/inbox/MailboxList";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import KanbanBoard from "@/components/kanban/KanbanBoard";
 import type { KanbanColumn } from "@/components/kanban/KanbanBoard";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
@@ -23,7 +21,6 @@ import AccountMenu from "@/components/common/AccountMenu";
 
 export default function KanbanPage() {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const user = useAppSelector((state) => state.auth.user);
   
@@ -41,21 +38,10 @@ export default function KanbanPage() {
     body: "",
   });
 
-  // Theme management - extracted to custom hook
-  const { theme, toggleTheme } = useTheme();
+  // Theme is still used for EmailDetailPopup component
+  const { theme } = useTheme();
 
-  const logoutMutation = useMutation({
-    mutationFn: authService.logout,
-    onSuccess: () => {
-      dispatch(logout());
-      queryClient.clear();
-      navigate("/login");
-    },
-  });
 
-  const handleLogout = () => {
-    logoutMutation.mutate();
-  };
 
   const handleSelectMailbox = (id: string) => {
     navigate(`/${id}`);
@@ -689,12 +675,9 @@ export default function KanbanPage() {
         <div className="flex items-center gap-2">
           <KanbanToggle isKanban={true} onToggle={() => navigate("/inbox")} />
           
-          {/* Account Menu */}
+          {/* Account Menu - now uses internal hook for theme/logout */}
           <AccountMenu
             user={user}
-            theme={theme}
-            onToggleTheme={toggleTheme}
-            onLogout={handleLogout}
             showFullProfile={false}
           />
         </div>
@@ -836,9 +819,6 @@ export default function KanbanPage() {
                 setIsComposeOpen(true);
                 setMobileView("kanban");
               }}
-              onLogout={handleLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
             />
           </div>
 

@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { logout } from "@/store/authSlice";
-import { authService } from "@/services/auth.service";
+import { useAppSelector } from "@/store/hooks";
 import { emailService } from "@/services/email.service";
 import type { Email } from "@/types/email";
 
@@ -11,17 +9,16 @@ import EmailList from "@/components/inbox/EmailList";
 import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import SearchBar from "@/components/search/SearchBar";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
-import { useTheme, useSSE, useFCM } from "@/hooks";
+import { useTheme, useSSE, useFCM, useEmailActions } from "@/hooks";
 import { SEARCH_MODES, type SearchMode } from "@/constants";
 
 export default function InboxPage() {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const user = useAppSelector((state) => state.auth.user);
-  
+
   // Initialize FCM for push notifications
   useFCM();
 
@@ -30,23 +27,25 @@ export default function InboxPage() {
     emailId?: string;
   }>();
 
-  const [isComposeOpen, setIsComposeOpen] = useState(false);
-  const [composeInitialData, setComposeInitialData] = useState({
-    to: [] as string[],
-    cc: [] as string[],
-    subject: "",
-    body: "",
-    quotedContent: "",
-    quotedHeader: "",
-  });
+  // Email compose actions - extracted to custom hook
+  const {
+    isComposeOpen,
+    setIsComposeOpen,
+    composeData,
+    handleReply,
+    handleReplyAll,
+    handleForward,
+    clearComposeData,
+  } = useEmailActions({ userEmail: user?.email });
+
   const [mobileView, setMobileView] = useState<"mailbox" | "list" | "detail">(
     "list"
   );
   // Search query from header - when set, shows search results in email list
   const [headerSearchQuery, setHeaderSearchQuery] = useState("");
-  
-  // Theme management - extracted to custom hook
-  const { theme, toggleTheme } = useTheme();
+
+  // Theme is still used for EmailDetail component
+  const { theme } = useTheme();
 
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
@@ -85,19 +84,6 @@ export default function InboxPage() {
     }
   }, [user]);
 
-  const logoutMutation = useMutation({
-    mutationFn: authService.logout,
-    onSuccess: () => {
-      dispatch(logout());
-      queryClient.clear();
-      navigate("/login");
-    },
-  });
-
-  const handleLogout = () => {
-    logoutMutation.mutate();
-  };
-
   const handleSelectMailbox = (id: string) => {
     // Clear search when selecting a mailbox
     setHeaderSearchQuery("");
@@ -112,126 +98,6 @@ export default function InboxPage() {
   const handleToggleStar = () => {
     // Do nothing - let the mutation handle cache updates
     // This callback is kept for backward compatibility but no longer invalidates
-  };
-
-  const handleForward = (email: Email) => {
-    const originalBody = email.body || email.preview || "";
-    const forwardHeader = `---------- Forwarded message ---------\nFrom: ${email.from}\nDate: ${new Date(email.received_at).toLocaleString()}\nSubject: ${email.subject}\nTo: ${email.to.join(", ")}`;
-    
-    setComposeInitialData({
-      to: [],
-      cc: [],
-      subject: `Fwd: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: forwardHeader,
-    });
-    setIsComposeOpen(true);
-  };
-
-  const handleReply = (email: Email) => {
-    const date = new Date(email.received_at);
-    const weekday = date.toLocaleDateString("vi-VN", { weekday: "short" });
-    const day = date.getDate();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const time = date.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const dateStr = `Vào ${weekday}, ${day} thg ${month}, ${year} vào lúc ${time}`;
-
-    let senderName = email.from;
-    let senderEmail = email.from;
-    const match = email.from.match(/^(.*?)\s*<(.*)>$/);
-    if (match) {
-      senderName = match[1].replace(/"/g, "").trim();
-      senderEmail = match[2].trim();
-    } else {
-      senderName = email.from.replace(/"/g, "").trim();
-      if (senderName.includes("@")) {
-        senderEmail = senderName;
-      }
-    }
-
-    const senderHtml = `${senderName} <${senderEmail}>`;
-
-    const originalBody = email.body || email.preview || "";
-    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
-    
-    setComposeInitialData({
-      to: [senderEmail],
-      cc: [],
-      subject: `Re: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: quoteHeader,
-    });
-    setIsComposeOpen(true);
-  };
-
-  const handleReplyAll = (email: Email) => {
-    const date = new Date(email.received_at);
-    const weekday = date.toLocaleDateString("vi-VN", { weekday: "short" });
-    const day = date.getDate();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const time = date.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const dateStr = `Vào ${weekday}, ${day} thg ${month}, ${year} vào lúc ${time}`;
-
-    let senderName = email.from;
-    let senderEmail = email.from;
-    const match = email.from.match(/^(.*?)\s*<(.*)>$/);
-    if (match) {
-      senderName = match[1].replace(/"/g, "").trim();
-      senderEmail = match[2].trim();
-    } else {
-      senderName = email.from.replace(/"/g, "").trim();
-      if (senderName.includes("@")) {
-        senderEmail = senderName;
-      }
-    }
-
-    const senderHtml = `${senderName} <${senderEmail}>`;
-
-    // Calculate CC list
-    // CC = (Original To + Original CC) - (Me + Sender)
-    const myEmail = user?.email || "";
-    const allRecipients = [...(email.to || []), ...(email.cc || [])];
-
-    const ccList = allRecipients
-      .map((r) => {
-        const match = r.match(/^(.*?)\s*<(.*)>$/);
-        return match ? match[2].trim() : r.trim();
-      })
-      .filter(
-        (email) =>
-          email.toLowerCase() !== myEmail.toLowerCase() &&
-          email.toLowerCase() !== senderEmail.toLowerCase()
-      );
-
-    // Remove duplicates
-    const uniqueCcList = [...new Set(ccList)];
-
-    const originalBody = email.body || email.preview || "";
-    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
-    
-    setComposeInitialData({
-      to: [senderEmail],
-      cc: uniqueCcList,
-      subject: `Re: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: quoteHeader,
-    });
-    setIsComposeOpen(true);
   };
 
   return (
@@ -282,9 +148,6 @@ export default function InboxPage() {
               selectedMailboxId={headerSearchQuery ? null : selectedMailboxId}
               onSelectMailbox={handleSelectMailbox}
               onComposeClick={() => setIsComposeOpen(true)}
-              onLogout={handleLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
             />
           </div>
           {/* Column 2: Email List */}
@@ -343,9 +206,6 @@ export default function InboxPage() {
                 setIsComposeOpen(true);
                 setMobileView("list");
               }}
-              onLogout={handleLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
             />
           </div>
 
@@ -424,15 +284,14 @@ export default function InboxPage() {
         open={isComposeOpen}
         onOpenChange={(open) => {
           setIsComposeOpen(open);
-          if (!open)
-            setComposeInitialData({ to: [], cc: [], subject: "", body: "", quotedContent: "", quotedHeader: "" });
+          if (!open) clearComposeData();
         }}
-        initialTo={composeInitialData.to}
-        initialCc={composeInitialData.cc}
-        initialSubject={composeInitialData.subject}
-        initialBody={composeInitialData.body}
-        quotedContent={composeInitialData.quotedContent}
-        quotedHeader={composeInitialData.quotedHeader}
+        initialTo={composeData.to}
+        initialCc={composeData.cc}
+        initialSubject={composeData.subject}
+        initialBody={composeData.body}
+        quotedContent={composeData.quotedContent}
+        quotedHeader={composeData.quotedHeader}
       />
     </div>
   );

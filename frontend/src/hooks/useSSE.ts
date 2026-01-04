@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/api-client";
 import { API_BASE_URL } from "@/config/api";
@@ -30,6 +30,8 @@ export interface UseSSEOptions {
   enabled?: boolean;
   /** Debounce time in ms to ignore SSE updates after user actions */
   debounceMs?: number;
+  /** Maximum reconnection attempts */
+  maxReconnectAttempts?: number;
   /** Custom event handlers */
   handlers?: SSEEventHandlers;
 }
@@ -43,19 +45,24 @@ export interface UseSSEReturn {
   disconnect: () => void;
 }
 
+// Default configuration
+const DEFAULT_DEBOUNCE_MS = 3000;
+const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1000;
+
 /**
  * Custom hook for Server-Sent Events (SSE) connection
  * 
- * Handles:
+ * Features:
  * - Connection to /events endpoint with authentication
- * - Automatic reconnection on error
+ * - Automatic reconnection with exponential backoff
  * - email_update events for real-time inbox updates
  * - summary_update events for AI-generated summaries
  * - Debouncing to prevent conflicts with user actions
  * 
  * @example
  * ```tsx
- * useSSE({
+ * const { isConnected, reconnect } = useSSE({
  *   enabled: !!user,
  *   handlers: {
  *     onEmailUpdate: () => refetch(),
@@ -68,13 +75,19 @@ export interface UseSSEReturn {
  */
 export function useSSE({
   enabled = true,
-  debounceMs = 3000,
+  debounceMs = DEFAULT_DEBOUNCE_MS,
+  maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
   handlers = {},
 }: UseSSEOptions = {}): UseSSEReturn {
   const queryClient = useQueryClient();
+  
+  // Use state for isConnected so component re-renders on connection change
+  const [isConnected, setIsConnected] = useState(false);
+  
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastMutationTimeRef = useRef(0);
-  const isConnectedRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Use ref for handlers to avoid reconnecting when handlers change
   const handlersRef = useRef(handlers);
@@ -82,13 +95,22 @@ export function useSSE({
     handlersRef.current = handlers;
   }, [handlers]);
 
+  // Clear any pending reconnect timeout
+  const clearReconnectTimeout = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
+    clearReconnectTimeout();
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
-      isConnectedRef.current = false;
+      setIsConnected(false);
     }
-  }, []);
+  }, [clearReconnectTimeout]);
 
   const connect = useCallback(() => {
     // Don't connect if disabled or already connected
@@ -104,7 +126,8 @@ export function useSSE({
     });
 
     eventSource.onopen = () => {
-      isConnectedRef.current = true;
+      setIsConnected(true);
+      reconnectAttemptsRef.current = 0; // Reset on successful connection
       handlersRef.current.onOpen?.();
     };
 
@@ -147,22 +170,37 @@ export function useSSE({
     };
 
     eventSource.onerror = (error) => {
-      // ignore specific error during development/reloading
+      // Ignore specific error during development/reloading
       if (eventSource.readyState === EventSource.CLOSED) return;
 
       console.error("[SSE] Connection error:", error);
-      isConnectedRef.current = false;
+      setIsConnected(false);
       handlersRef.current.onError?.(error);
       
-      // Close and allow reconnection
+      // Close current connection
       eventSource.close();
       eventSourceRef.current = null;
+      
+      // Attempt reconnection with exponential backoff
+      if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+        const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current);
+        reconnectAttemptsRef.current++;
+        
+        console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
+        
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connect();
+        }, delay);
+      } else {
+        console.error(`[SSE] Max reconnection attempts (${maxReconnectAttempts}) reached`);
+      }
     };
 
     eventSourceRef.current = eventSource;
-  }, [enabled, debounceMs, queryClient]); // Removed handlers from dependencies
+  }, [enabled, debounceMs, maxReconnectAttempts, queryClient]);
 
   const reconnect = useCallback(() => {
+    reconnectAttemptsRef.current = 0; // Reset attempts on manual reconnect
     disconnect();
     // Small delay before reconnecting
     setTimeout(connect, 100);
@@ -194,7 +232,7 @@ export function useSSE({
   }, [enabled, connect, disconnect]);
 
   return {
-    isConnected: isConnectedRef.current,
+    isConnected,
     reconnect,
     disconnect,
   };

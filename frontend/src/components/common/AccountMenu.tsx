@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -7,16 +6,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAccountActions } from "@/hooks";
 
 interface AccountMenuProps {
-  user: {
+  /** 
+   * User object. If not provided, will use user from useAccountActions hook.
+   */
+  user?: {
     name?: string;
     email?: string;
     avatar_url?: string;
   } | null;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
-  onLogout: () => void;
+  /** 
+   * Theme. If not provided, will use theme from useAccountActions hook.
+   */
+  theme?: "light" | "dark";
+  /** 
+   * Theme toggle handler. If not provided, will use toggleTheme from useAccountActions hook.
+   */
+  onToggleTheme?: () => void;
+  /** 
+   * Logout handler. If not provided, will use handleLogout from useAccountActions hook.
+   */
+  onLogout?: () => void;
+  /** Optional: navigate to tasks handler */
+  onNavigateToTasks?: () => void;
+  /** Optional: navigate to settings handler */
+  onNavigateToSettings?: () => void;
   /** Optional: show full profile button with name/email, otherwise just avatar */
   showFullProfile?: boolean;
   /** Optional: additional menu items */
@@ -41,14 +57,33 @@ const defaultShortcuts: KeyboardShortcut[] = [
 const DEFAULT_AVATAR = "https://lh3.googleusercontent.com/aida-public/AB6AXuDRNQSlv4je28jMHI0WjXZhE5xKv7aSQKNqKhtFzfV3noDp7AgOUk9Hz5vby11yRlctZmQJOUwfeApOcQV9Yt";
 
 export default function AccountMenu({
-  user,
-  theme,
-  onToggleTheme,
-  onLogout,
+  user: userProp,
+  theme: themeProp,
+  onToggleTheme: onToggleThemeProp,
+  onLogout: onLogoutProp,
+  onNavigateToTasks,
+  onNavigateToSettings,
   showFullProfile = false,
   additionalItems,
 }: AccountMenuProps) {
-  const navigate = useNavigate();
+  // Get actions from hook
+  const {
+    user: hookUser,
+    theme: hookTheme,
+    toggleTheme: hookToggleTheme,
+    handleLogout: hookHandleLogout,
+    navigateToTasks,
+    navigateToSettings,
+  } = useAccountActions();
+
+  // Use props if provided, otherwise fall back to hook values
+  const user = userProp !== undefined ? userProp : hookUser;
+  const theme = themeProp ?? hookTheme;
+  const onToggleTheme = onToggleThemeProp ?? hookToggleTheme;
+  const onLogout = onLogoutProp ?? hookHandleLogout;
+  const handleNavigateToTasks = onNavigateToTasks ?? navigateToTasks;
+  const handleNavigateToSettings = onNavigateToSettings ?? navigateToSettings;
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -135,7 +170,7 @@ export default function AccountMenu({
             <Button
               variant="ghost"
               onClick={() => {
-                navigate("/tasks");
+                handleNavigateToTasks();
                 setIsMenuOpen(false);
               }}
               className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"
@@ -165,7 +200,7 @@ export default function AccountMenu({
             <Button
               variant="ghost"
               onClick={() => {
-                // TODO: Navigate to settings when implemented
+                handleNavigateToSettings();
                 setIsMenuOpen(false);
               }}
               className="w-full px-3 py-2 justify-start h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors text-sm rounded-none"

@@ -10,9 +10,6 @@ interface MailboxListProps {
   selectedMailboxId: string | null;
   onSelectMailbox: (id: string) => void;
   onComposeClick?: () => void;
-  onLogout?: () => void;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
 }
 
 const getMailboxIconName = (type: string) => {
@@ -99,9 +96,6 @@ export default function MailboxList({
   selectedMailboxId,
   onSelectMailbox,
   onComposeClick,
-  onLogout,
-  theme,
-  onToggleTheme,
 }: MailboxListProps) {
   const user = useAppSelector((state) => state.auth.user);
 
@@ -127,13 +121,10 @@ export default function MailboxList({
 
   return (
     <aside className="flex h-full w-full flex-col bg-gray-50 dark:bg-[#111418] p-3 shrink-0 transition-colors duration-200">
-      {/* User Profile & Menu */}
+      {/* User Profile & Menu - Now using internal hook, no props needed */}
       <div className="shrink-0">
         <AccountMenu
           user={user}
-          theme={theme}
-          onToggleTheme={onToggleTheme}
-          onLogout={onLogout || (() => {})}
           showFullProfile={true}
         />
       </div>
