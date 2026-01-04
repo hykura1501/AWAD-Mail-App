@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
 import { format } from "date-fns";
@@ -28,12 +29,50 @@ export default function EmailDetail({
                                     }: EmailDetailProps) {
     const queryClient = useQueryClient();
     const { user } = useAppSelector((state) => state.auth);
+    
+    // Track which emails we've already marked as read to avoid duplicate API calls
+    const markedAsReadRef = useRef<Set<string>>(new Set());
 
     const { data: email, isLoading } = useQuery<Email>({
         queryKey: ["email", emailId],
         queryFn: () => emailService.getEmailById(emailId!),
         enabled: !!emailId,
     });
+
+    // Auto mark as read when email is opened
+    useEffect(() => {
+        if (email && emailId && !email.is_read && !markedAsReadRef.current.has(emailId)) {
+            // Mark this email as being processed to avoid duplicate calls
+            markedAsReadRef.current.add(emailId);
+            
+            // Optimistically update the email detail cache
+            queryClient.setQueryData<Email>(["email", emailId], {
+                ...email,
+                is_read: true,
+            });
+            
+            // Optimistically update all email list caches
+            queryClient.setQueriesData<EmailsResponse>(
+                { queryKey: ["emails"] },
+                (old) => {
+                    if (!old) return old;
+                    return {
+                        ...old,
+                        emails: old.emails.map((e: Email) =>
+                            e.id === emailId ? { ...e, is_read: true } : e
+                        ),
+                    };
+                }
+            );
+            
+            // Call the API to mark as read (fire and forget)
+            emailService.markAsRead(emailId).catch((error) => {
+                console.error("Failed to mark email as read:", error);
+                // On error, remove from tracked set so it can be retried
+                markedAsReadRef.current.delete(emailId);
+            });
+        }
+    }, [email, emailId, queryClient]);
 
     const toggleStarMutation = useMutation({
         mutationFn: emailService.toggleStar,
