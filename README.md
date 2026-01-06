@@ -442,6 +442,24 @@ IV | • The backend successfully sends real email text to the processing API (L
 
 If you'd like, I can also add a short "Quick Testing" subsection that explains how to temporarily shorten the snooze duration for manual testing (e.g., set to a few seconds), plus example curl commands to snooze and verify the wake-up behavior. 
 
+## Advanced Features (Week 5)
+
+- **Keyboard Navigation**
+  - Navigate emails on the Kanban board using arrow keys (`↑`, `↓`, `←`, `→`).
+  - Open emails with `Enter`, deselect with `Escape`.
+  - Visual focus indicator shows the currently selected email.
+
+- **Docker Integration**
+  - Fully dockerized application with `docker-compose`.
+  - Frontend: Multi-stage build (Node.js -> Nginx) for optimized production serving.
+  - Backend: Go container with necessary dependencies.
+  - Run the entire stack locally with a single command: `docker-compose up`.
+
+- **CI/CD Pipeline**
+  - Automated GitHub Actions pipeline for both frontend and backend.
+  - **Frontend**: Runs linting and build checks on pull requests and pushes to main.
+  - **Backend**: Runs dependency download, build verification, and automated tests. 
+
 ## License
 
 This project is created for educational purposes.
