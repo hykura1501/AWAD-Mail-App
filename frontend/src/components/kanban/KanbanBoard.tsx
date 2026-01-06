@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -57,7 +57,8 @@ function DraggableEmailCard({
   summary,
   summaryLoading,
   onRequestSummary,
-  columnId
+  columnId,
+  isFocused
 }: {
   email: Email;
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
@@ -66,11 +67,24 @@ function DraggableEmailCard({
   summaryLoading?: boolean;
   onRequestSummary?: (emailId: string) => void;
   columnId?: string;
+  isFocused?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  const elementRef = useRef<HTMLDivElement>(null);
+  const { attributes, listeners, setNodeRef: dndSetNodeRef, isDragging } = useDraggable({
     id: email.id,
     data: { email, type: "email", columnId: email.mailbox_id }
   });
+
+  const setNodeRef = (node: HTMLDivElement | null) => {
+    dndSetNodeRef(node);
+    elementRef.current = node;
+  };
+
+  useEffect(() => {
+    if (isFocused && elementRef.current) {
+      elementRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [isFocused]);
 
   return (
     <div
@@ -83,6 +97,7 @@ function DraggableEmailCard({
         hover:shadow-md hover:border-blue-200 dark:hover:border-blue-900/30
         cursor-grab active:cursor-grabbing touch-none overflow-hidden
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
+        ${isFocused ? "ring-2 ring-blue-500 border-blue-500 z-10" : ""}
       `}
       onClick={() => onClick?.(email.id)}
     >
@@ -245,6 +260,78 @@ export default function KanbanBoard({
   isLoading = false
 }: KanbanBoardProps) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
+  const [focusedEmailId, setFocusedEmailId] = useState<string | null>(null);
+
+  // Keyboard navigation logic
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if input/textarea is focused
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+
+      if (!columns.length) return;
+
+      const findCurrentPosition = () => {
+        if (!focusedEmailId) return { colIndex: -1, emailIndex: -1 };
+        for (let c = 0; c < columns.length; c++) {
+          const eIdx = columns[c].emails.findIndex(email => email.id === focusedEmailId);
+          if (eIdx !== -1) return { colIndex: c, emailIndex: eIdx };
+        }
+        return { colIndex: -1, emailIndex: -1 };
+      };
+
+      const { colIndex, emailIndex } = findCurrentPosition();
+
+      // Helper to focus
+      const focus = (cIdx: number, eIdx: number) => {
+        if (columns[cIdx] && columns[cIdx].emails[eIdx]) {
+          setFocusedEmailId(columns[cIdx].emails[eIdx].id);
+          e.preventDefault();
+        }
+      };
+
+      switch (e.key) {
+        case 'ArrowDown':
+          if (colIndex === -1) focus(0, 0);
+          else if (emailIndex < columns[colIndex].emails.length - 1) focus(colIndex, emailIndex + 1);
+          break;
+        case 'ArrowUp':
+          if (colIndex === -1) focus(0, 0);
+          else if (emailIndex > 0) focus(colIndex, emailIndex - 1);
+          break;
+        case 'ArrowRight':
+          if (colIndex === -1) focus(0, 0);
+          else if (colIndex < columns.length - 1) {
+            // Try to maintain relative vertical position or go to last
+            const targetCol = columns[colIndex + 1];
+            const targetIdx = Math.min(emailIndex, targetCol.emails.length - 1);
+            if (targetCol.emails.length > 0) focus(colIndex + 1, Math.max(0, targetIdx));
+            else focus(colIndex + 1, -1); // Does not focus if empty? Logic above requires existing email
+          }
+          break;
+        case 'ArrowLeft':
+          if (colIndex === -1) focus(0, 0);
+          else if (colIndex > 0) {
+            const targetCol = columns[colIndex - 1];
+            const targetIdx = Math.min(emailIndex, targetCol.emails.length - 1);
+            if (targetCol.emails.length > 0) focus(colIndex - 1, Math.max(0, targetIdx));
+          }
+          break;
+        case 'Enter':
+          if (focusedEmailId && onEmailClick) {
+            onEmailClick(focusedEmailId);
+            e.preventDefault();
+          }
+          break;
+        case 'Escape':
+          setFocusedEmailId(null);
+          e.preventDefault();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [columns, focusedEmailId, onEmailClick]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -319,6 +406,7 @@ export default function KanbanBoard({
                 summaryLoading={emailSummaries[email.id]?.loading}
                 onRequestSummary={onRequestSummary}
                 columnId={col.id}
+                isFocused={focusedEmailId === email.id}
               />
             ))}
           </DroppableColumn>
