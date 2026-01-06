@@ -1,9 +1,9 @@
 # React Authentication + Email Dashboard G06 Week03
 
 **Public URLs:**
-- **Frontend (Vercel):** https://g07-week4.vercel.app/
-- **Backend (Render):** https://g07-week4.onrender.com
-- **Monorepo:** https://github.com/hykura1501/G07-Week4
+- **Frontend (Vercel):** https://mail-app-drab.vercel.app/
+- **Backend (Render):** https://awad-mail-app-vm4s.onrender.com
+- **Monorepo:** https://github.com/hykura1501/AWAD-Mail-App
 
 ---
 
@@ -442,23 +442,70 @@ IV | • The backend successfully sends real email text to the processing API (L
 
 If you'd like, I can also add a short "Quick Testing" subsection that explains how to temporarily shorten the snooze duration for manual testing (e.g., set to a few seconds), plus example curl commands to snooze and verify the wake-up behavior. 
 
-## Advanced Features (Week 5)
+## Docker Support (Advanced)
 
-- **Keyboard Navigation**
-  - Navigate emails on the Kanban board using arrow keys (`↑`, `↓`, `←`, `→`).
-  - Open emails with `Enter`, deselect with `Escape`.
-  - Visual focus indicator shows the currently selected email.
+The application is fully containerized for consistent development and deployment environments.
 
-- **Docker Integration**
-  - Fully dockerized application with `docker-compose`.
-  - Frontend: Multi-stage build (Node.js -> Nginx) for optimized production serving.
-  - Backend: Go container with necessary dependencies.
-  - Run the entire stack locally with a single command: `docker-compose up`.
+### Running with Docker Compose
 
-- **CI/CD Pipeline**
-  - Automated GitHub Actions pipeline for both frontend and backend.
-  - **Frontend**: Runs linting and build checks on pull requests and pushes to main.
-  - **Backend**: Runs dependency download, build verification, and automated tests. 
+1. **Prerequisites**: Ensure you have Docker and Docker Compose installed on your machine.
+2. **Configuration**: 
+   - Ensure your `.env` files in `backend/` and `frontend/` are configured correctly.
+   - For local Docker execution, you might need to update `VITE_API_BASE_URL` in `frontend/.env` to point to `http://localhost:8080`.
+
+3. **Start the Application**:
+   Run the following command in the root directory:
+   ```bash
+   docker-compose up --build
+   ```
+   
+   This command will:
+   - Build the **Backend** container (Go 1.24).
+   - Build the **Frontend** container (Multi-stage: Node.js build -> Nginx serve).
+   - Expose the Frontend on port `3000` and Backend on port `8080`.
+
+4. **Access the App**:
+   - Frontend: [http://localhost:3000](http://localhost:3000)
+   - Backend API: [http://localhost:8080](http://localhost:8080)
+
+### Container Architecture
+- **Frontend**: Uses a multi-stage Dockerfile. Stage 1 builds the React app using Node.js. Stage 2 serves the static files using Nginx, configured with a custom `nginx.conf` for SPA routing.
+- **Backend**: Uses a lightweight Golang image to run the compiled binary.
+
+## CI/CD & Automation
+
+This project utilizes **GitHub Actions** for automated testing and integration checks, ensuring code quality before merging.
+
+### Workflow: `CI/CD Pipeline`
+
+The pipeline is defined in `.github/workflows/ci.yml` and triggers on:
+- **Push** to any branch (`**`): runs immediate feedback checks.
+- **Pull Request** to `main`: runs checks on the simulated merge result.
+
+### Jobs
+1. **Frontend Check**:
+   - Sets up Node.js 20 environment.
+   - Installs dependencies (`npm ci`).
+   - Runs **Linting** (`npm run lint`) to catch code style issues.
+   - Runs **Build** (`npm run build`) to ensure the project compiles successfully.
+
+2. **Backend Check**:
+   - Sets up Go 1.24 environment.
+   - Downloads Go module dependencies.
+   - Runs **Build** (`go build`) to verify compilation.
+   - Runs **Tests** (`go test ./...`) to execute all unit tests.
+
+### Status Checks
+Pull Requests are configured (in GitHub repository settings) to require these checks to pass before merging is allowed, preventing broken code from reaching the main branch.
+
+## Keyboard Navigation (Accessibility)
+
+Enhanced accessibility allows users to navigate the Kanban board using only the keyboard:
+
+- **Arrow Keys** (`↑`, `↓`, `←`, `→`): Navigate selection between emails and columns.
+- **Enter**: Open the selected email details.
+- **Escape**: Deselect the current email.
+- **Focus Indicator**: A visual blue ring highlights the currently selected card.
 
 ## License
 
