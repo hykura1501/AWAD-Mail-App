@@ -61,7 +61,20 @@ export default function KanbanPage() {
   // Task drawer state
   const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
 
+  // Summary hook - handles summary states, caching, and loading
+  // IMPORTANT: Must come BEFORE useKanbanData so we can pass queueSummaries as callback
+  const {
+    summaryStates,
+    summary,
+    isSummaryLoading,
+    requestSummary: handleRequestSummary,
+    handleSummaryUpdate,
+    loadDetailSummary,
+    queueSummaries,
+  } = useKanbanSummaries();
+
   // Kanban Data Hook - handles column loading, caching, pagination
+  // Pass queueSummaries to onInitComplete to auto-summarize emails when page loads
   const {
     kanbanEmails,
     kanbanOffsets,
@@ -75,7 +88,13 @@ export default function KanbanPage() {
     setKanbanEmails,
     setKanbanColumnConfigs,
     limit,
-  } = useKanbanData();
+  } = useKanbanData({
+    onInitComplete: (emailIds) => {
+      // Queue all loaded emails for AI summarization
+      console.log(`[KanbanPage] Queueing ${emailIds.length} emails for summarization`);
+      queueSummaries(emailIds);
+    },
+  });
   
   // State cho popup chi tiết email
   const [detailEmailId, setDetailEmailId] = useState<string | null>(null);
@@ -92,16 +111,6 @@ export default function KanbanPage() {
     closeSnoozeDialog,
     confirmSnooze,
   } = useKanbanSnooze();
-
-  // Summary hook - handles summary states, caching, and loading
-  const {
-    summaryStates,
-    summary,
-    isSummaryLoading,
-    requestSummary: handleRequestSummary,
-    handleSummaryUpdate,
-    loadDetailSummary,
-  } = useKanbanSummaries();
 
 
   // Note: kanbanOffsets, loadingColumns, kanbanEmails, limit are now from useKanbanData hook

@@ -14,8 +14,8 @@ import (
 
 // OllamaService implements SummarizerService using Ollama local LLM
 type OllamaService struct {
-	BaseURL string // e.g., "http://localhost:11434"
-	Model   string // e.g., "llama3", "mistral", "qwen2"
+	getBaseURL func() string // Dynamic getter for BaseURL
+	getModel   func() string // Dynamic getter for Model
 }
 
 // NewOllamaService creates a new Ollama service
@@ -26,15 +26,24 @@ func NewOllamaService(baseURL, model string) *OllamaService {
 	if model == "" {
 		model = "llama3"
 	}
+	// Use static values (for backward compatibility when no runtime config)
 	return &OllamaService{
-		BaseURL: baseURL,
-		Model:   model,
+		getBaseURL: func() string { return baseURL },
+		getModel:   func() string { return model },
+	}
+}
+
+// NewOllamaServiceWithGetters creates a new Ollama service with dynamic getters
+func NewOllamaServiceWithGetters(getBaseURL, getModel func() string) *OllamaService {
+	return &OllamaService{
+		getBaseURL: getBaseURL,
+		getModel:   getModel,
 	}
 }
 
 // SummarizeEmail implements SummarizerService
 func (o *OllamaService) SummarizeEmail(ctx context.Context, emailText string) (string, error) {
-	url := o.BaseURL + "/api/generate"
+	url := o.getBaseURL() + "/api/generate"
 
 	// Enhanced Vietnamese prompt with professional prompting techniques
 	// (Same as Gemini for consistency across providers)
@@ -57,7 +66,7 @@ EMAIL:
 TÓM TẮT:`, emailText)
 
 	payload := map[string]interface{}{
-		"model":  o.Model,
+		"model":  o.getModel(),
 		"prompt": prompt,
 		"stream": false,
 		"options": map[string]interface{}{
@@ -106,7 +115,7 @@ TÓM TẮT:`, emailText)
 
 // ExtractTasksFromEmail implements SummarizerService for task extraction
 func (o *OllamaService) ExtractTasksFromEmail(ctx context.Context, emailText string) ([]TaskExtraction, error) {
-	url := o.BaseURL + "/api/generate"
+	url := o.getBaseURL() + "/api/generate"
 
 	currentDate := time.Now().Format("2006-01-02")
 
@@ -132,7 +141,7 @@ EMAIL:
 JSON OUTPUT:`, currentDate, emailText)
 
 	payload := map[string]interface{}{
-		"model":  o.Model,
+		"model":  o.getModel(),
 		"prompt": prompt,
 		"stream": false,
 		"options": map[string]interface{}{

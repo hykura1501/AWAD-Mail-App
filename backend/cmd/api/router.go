@@ -111,6 +111,14 @@ func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecas
 				tasks.POST("/extract/:emailId", taskHandler.ExtractTasksFromEmail)
 			}
 		}
+
+		// Settings routes (public) - Runtime configuration
+		settings := api.Group("/settings")
+		{
+			settings.GET("/ollama", GetOllamaSettings)
+			settings.PUT("/ollama", UpdateOllamaSettings)
+			settings.POST("/ollama/test", TestOllamaConnection)
+		}
 	}
 }
 

@@ -42,18 +42,21 @@ func (a *emailFetcherAdapter) GetEmailByID(userID, id string) (subject, body str
 }
 
 func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUsecase, taskUc taskUsecasePkg.TaskUsecase, sseManager *sse.Manager, cfg *config.Config, summaryRepo emailRepo.EmailSummaryRepository, taskRepository taskRepo.TaskRepository) *Handler {
-	// Initialize AI service with pluggable provider (Gemini/Ollama)
-	aiCfg := ai.Config{
-		Provider:      ai.ProviderType(cfg.AIProvider),
-		GeminiAPIKey:  cfg.GeminiApiKey,
-		OllamaBaseURL: cfg.OllamaBaseURL,
-		OllamaModel:   cfg.OllamaModel,
+	// Initialize runtime config for settings API
+	InitRuntimeConfig(cfg.OllamaBaseURL, cfg.OllamaModel)
+
+	// Initialize AI service with dynamic config getters for runtime updates
+	aiCfg := ai.DynamicConfig{
+		Provider:         ai.ProviderType(cfg.AIProvider),
+		GeminiAPIKey:     cfg.GeminiApiKey,
+		GetOllamaBaseURL: GetRuntimeOllamaBaseURL,
+		GetOllamaModel:   GetRuntimeOllamaModel,
 	}
-	aiService, err := ai.NewSummarizerService(aiCfg)
+	aiService, err := ai.NewSummarizerServiceWithDynamicConfig(aiCfg)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize AI service: %v", err)
 	} else {
-		log.Printf("AI service initialized with provider: %s", cfg.AIProvider)
+		log.Printf("AI service initialized with provider: %s (dynamic config enabled)", cfg.AIProvider)
 	}
 
 	// Set AI service vào emailUsecase qua interface

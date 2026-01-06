@@ -1086,24 +1086,42 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			}
 		}
 	} else {
-		// Custom column without gmail_label_id: check DB mapping only
+		// Custom column without gmail_label_id: fetch emails directly using DB mapping
+		// Similar to how "snoozed" column works
 		dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
 		if err != nil {
-			// If error, return empty list
+			log.Printf("[GetEmailsByStatus] Failed to get emails for custom column %s: %v", status, err)
 			return []*emaildomain.Email{}, 0, nil
 		}
 
-		emailIDSet := make(map[string]bool)
-		for _, id := range dbEmailIDs {
-			emailIDSet[id] = true
+		if len(dbEmailIDs) == 0 {
+			return []*emaildomain.Email{}, 0, nil
 		}
 
-		// Filter emails that are in the custom column
-		for _, email := range emails {
-			if emailIDSet[email.ID] {
+		// Apply pagination
+		start := offset
+		end := offset + limit
+		if start >= len(dbEmailIDs) {
+			return []*emaildomain.Email{}, len(dbEmailIDs), nil
+		}
+		if end > len(dbEmailIDs) {
+			end = len(dbEmailIDs)
+		}
+		paginatedIDs := dbEmailIDs[start:end]
+
+		// Fetch full email details from Gmail
+		for _, emailID := range paginatedIDs {
+			email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				log.Printf("[GetEmailsByStatus] Failed to fetch email %s for column %s: %v", emailID, status, err)
+				continue
+			}
+			if email != nil {
 				filtered = append(filtered, email)
 			}
 		}
+
+		return filtered, len(dbEmailIDs), nil
 	}
 	return filtered, len(filtered), nil
 }
