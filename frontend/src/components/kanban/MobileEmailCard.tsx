@@ -42,18 +42,34 @@ export default function MobileEmailCard({
   return (
     <div
       onClick={() => onEmailClick(email.id)}
-      className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow cursor-pointer"
+      className={`bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow cursor-pointer ${
+        !email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""
+      }`}
     >
       <div className="flex justify-between items-start mb-2">
-        <h3 className="font-semibold text-sm text-gray-900 dark:text-white line-clamp-1">
-          {email.subject || "(No Subject)"}
-        </h3>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {/* Unread indicator dot */}
+          {!email.is_read && (
+            <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" title="Chưa đọc" />
+          )}
+          <h3 className={`text-sm line-clamp-1 flex-1 ${
+            !email.is_read 
+              ? "font-bold text-gray-900 dark:text-white" 
+              : "font-semibold text-gray-900 dark:text-white"
+          }`}>
+            {email.subject || "(No Subject)"}
+          </h3>
+        </div>
         <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 whitespace-nowrap">
           {new Date(email.received_at).toLocaleDateString()}
         </span>
       </div>
       
-      <p className="text-xs text-gray-600 dark:text-gray-300 mb-2">
+      <p className={`text-xs mb-2 ${
+        !email.is_read 
+          ? "font-semibold text-gray-800 dark:text-gray-200" 
+          : "text-gray-600 dark:text-gray-300"
+      }`}>
         {getSenderName()}
       </p>
       

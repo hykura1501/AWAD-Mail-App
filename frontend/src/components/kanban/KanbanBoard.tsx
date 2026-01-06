@@ -70,19 +70,34 @@ function DraggableEmailCard({
         hover:shadow-md hover:border-blue-200 dark:hover:border-blue-900/30
         cursor-grab active:cursor-grabbing touch-none
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
+        ${!email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""}
       `}
       onClick={() => onClick?.(email.id)}
     >
       <div className="flex justify-between items-start gap-2">
-        <div className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate flex-1">
-          {getSenderName(email)}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {/* Unread indicator dot */}
+          {!email.is_read && (
+            <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" title="Chưa đọc" />
+          )}
+          <div className={`text-xs truncate flex-1 ${
+            !email.is_read 
+              ? "font-bold text-gray-800 dark:text-gray-100" 
+              : "font-medium text-gray-500 dark:text-gray-400"
+          }`}>
+            {getSenderName(email)}
+          </div>
         </div>
         <div className="text-[10px] text-gray-400 font-medium whitespace-nowrap shrink-0">
           {new Date(email.received_at).toLocaleDateString()}
         </div>
       </div>
       
-      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
+      <div className={`text-sm leading-tight ${
+        !email.is_read 
+          ? "font-semibold text-gray-900 dark:text-gray-100" 
+          : "font-medium text-gray-800 dark:text-gray-200"
+      }`}>
         {email.subject}
       </div>
       
