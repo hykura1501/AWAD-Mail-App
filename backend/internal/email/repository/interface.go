@@ -10,4 +10,5 @@ type EmailRepository interface {
 	GetEmailsByStatus(status string, limit, offset int) ([]*emaildomain.Email, int, error)
 	GetEmailByID(id string) (*emaildomain.Email, error)
 	UpdateEmail(email *emaildomain.Email) error
+	UpsertEmail(email *emaildomain.Email) error
 }

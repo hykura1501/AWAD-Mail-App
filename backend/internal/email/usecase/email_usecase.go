@@ -20,6 +20,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// EventService defines interface for sending notifications
+type EventService interface {
+	SendToUser(userID string, eventType string, payload interface{})
+}
+
 // emailUsecase implements EmailUsecase interface
 type emailUsecase struct {
 	emailRepo             repository.EmailRepository
@@ -38,7 +43,15 @@ type emailUsecase struct {
 	vectorSearchService VectorSearchService
 	syncJobQueue        chan EmailSyncJob // Job queue for email sync workers
 	workerWg            sync.WaitGroup    // Wait group for workers
+	eventService        EventService      // injected event service
 }
+
+// SetEventService allows wiring EventService after creation
+func (u *emailUsecase) SetEventService(svc EventService) {
+	u.eventService = svc
+}
+
+
 
 // EmailSyncJob represents a job to sync an email to vector DB
 type EmailSyncJob struct {
@@ -149,21 +162,50 @@ func (u *emailUsecase) checkSnoozedEmails() {
 			email.Status = "inbox"
 			email.SnoozedUntil = nil
 			u.emailRepo.UpdateEmail(email)
+
+			// Update persistent mapping if UserID is available (important for Gmail/IMAP)
+			if email.UserID != "" {
+				if err := u.emailKanbanColumnRepo.SetEmailColumn(email.UserID, email.ID, "inbox"); err != nil {
+					fmt.Printf("Failed to update persistent column for email %s: %v\n", email.ID, err)
+				}
+				
+				// Notify frontend via SSE
+				if u.eventService != nil {
+					u.eventService.SendToUser(email.UserID, "email_update", map[string]string{
+						"action": "unsnooze",
+						"email_id": email.ID,
+						"mailbox_id": "inbox",
+					})
+				}
+			}
+
 			fmt.Printf("Email %s woke up from snooze\n", email.ID)
 		}
 	}
 }
 
 func (u *emailUsecase) SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error {
-	// Update local status
+	// Update local status map
 	u.kanbanStatus[emailID] = "snoozed"
 
-	// Also update the email object in repository if possible
-	email, err := u.emailRepo.GetEmailByID(emailID)
-	if err == nil && email != nil {
+	// Fetch the full email object (from provider or repo)
+	email, err := u.GetEmailByID(userID, emailID)
+	if err != nil {
+		// If we can't fetch it, we can't persist the snooze timer effectively for the checker
+		// But we still return nil because the map update above might be enough for immediate UI sync
+		log.Printf("[SnoozeEmail] Warning: could not fetch email %s to persist snooze timer: %v", emailID, err)
+		return nil
+	}
+
+	if email != nil {
 		email.Status = "snoozed"
 		email.SnoozedUntil = &snoozeUntil
-		u.emailRepo.UpdateEmail(email)
+		email.UserID = userID // Critical for wake-up logic
+		
+		// Persist to local repo so the background checker can find it
+		if err := u.emailRepo.UpsertEmail(email); err != nil {
+			log.Printf("[SnoozeEmail] Failed to upsert email to local repo: %v", err)
+		}
 	}
 
 	return nil
@@ -1235,6 +1277,51 @@ func (u *emailUsecase) GetKanbanColumns(userID string) ([]*emaildomain.KanbanCol
 		return nil, err
 	}
 
+	// Deduplicate columns by ColumnID
+	// Keep the most recently updated one
+	uniqueColumns := make(map[string]*emaildomain.KanbanColumn)
+	duplicatesToDelete := []string{}
+
+	for _, col := range columns {
+		if existing, found := uniqueColumns[col.ColumnID]; found {
+			// Keep the one updated most recently
+			if col.UpdatedAt.After(existing.UpdatedAt) {
+				duplicatesToDelete = append(duplicatesToDelete, existing.ID)
+				uniqueColumns[col.ColumnID] = col
+			} else {
+				duplicatesToDelete = append(duplicatesToDelete, col.ID)
+			}
+		} else {
+			uniqueColumns[col.ColumnID] = col
+		}
+	}
+
+	// Clean up duplicates async
+	if len(duplicatesToDelete) > 0 {
+		go func() {
+			for _, id := range duplicatesToDelete {
+				if err := u.kanbanColumnRepo.DeleteColumnByPK(id); err != nil {
+					log.Printf("Failed to delete duplicate column %s: %v", id, err)
+				}
+			}
+		}()
+	}
+
+	// Rebuild columns list ensuring we keep the unique ones
+	// Be careful to preserve order from DB if possible, or use the map
+	var validColumns []*emaildomain.KanbanColumn
+	// We iterate original list to preserve relative order of the "kept" items
+	seenIDs := make(map[string]bool)
+	for _, col := range columns {
+		if unique, ok := uniqueColumns[col.ColumnID]; ok && unique.ID == col.ID {
+			if !seenIDs[col.ColumnID] {
+				validColumns = append(validColumns, col)
+				seenIDs[col.ColumnID] = true
+			}
+		}
+	}
+	columns = validColumns
+
 	// Default columns that should always exist
 	defaults := []*emaildomain.KanbanColumn{
 		{
@@ -1277,6 +1364,13 @@ func (u *emailUsecase) GetKanbanColumns(userID string) ([]*emaildomain.KanbanCol
 
 	for _, defaultCol := range defaults {
 		if !existingColumnIDs[defaultCol.ColumnID] {
+			// Double check against DB to avoid race condition
+			existing, _ := u.kanbanColumnRepo.GetColumnByID(userID, defaultCol.ColumnID)
+			if existing != nil {
+				columns = append(columns, existing)
+				continue
+			}
+
 			if err := u.CreateKanbanColumn(userID, defaultCol); err != nil {
 				log.Printf("Failed to create default column %s: %v", defaultCol.ColumnID, err)
 			} else {

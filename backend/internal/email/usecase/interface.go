@@ -41,4 +41,5 @@ type EmailUsecase interface {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	})
 	SetVectorSearchService(svc VectorSearchService)
+	SetEventService(svc EventService)
 }

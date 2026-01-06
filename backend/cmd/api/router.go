@@ -13,6 +13,9 @@ import (
 )
 
 func SetupRoutes(r *gin.Engine, authUsecase authUsecase.AuthUsecase, emailUsecase emailUsecase.EmailUsecase, sseManager *sse.Manager, cfg *config.Config) {
+	// Inject notification service for real-time updates (e.g. snooze wakeup)
+	emailUsecase.SetEventService(sseManager)
+
 	authHandler := delivery.NewAuthHandler(authUsecase)
 	emailHandler := emailDelivery.NewEmailHandler(emailUsecase)
 

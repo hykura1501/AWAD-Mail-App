@@ -316,6 +316,14 @@ func (r *emailRepository) UpdateEmail(email *emaildomain.Email) error {
 	return nil
 }
 
+func (r *emailRepository) UpsertEmail(email *emaildomain.Email) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.emails[email.ID] = email
+	return nil
+}
+
 // GetEmailsByStatus returns emails by status (for Kanban columns)
 func (r *emailRepository) GetEmailsByStatus(status string, limit, offset int) ([]*emaildomain.Email, int, error) {
 	r.mu.RLock()

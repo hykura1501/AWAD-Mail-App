@@ -85,6 +85,11 @@ func (r *kanbanColumnRepository) DeleteColumn(userID, columnID string) error {
 	return r.db.Where("user_id = ? AND column_id = ?", userID, columnID).Delete(&emaildomain.KanbanColumn{}).Error
 }
 
+// DeleteColumnByPK deletes a column by primary key
+func (r *kanbanColumnRepository) DeleteColumnByPK(id string) error {
+	return r.db.Delete(&emaildomain.KanbanColumn{}, "id = ?", id).Error
+}
+
 // UpdateColumnOrders updates column order for multiple columns
 func (r *kanbanColumnRepository) UpdateColumnOrders(userID string, orders map[string]int) error {
 	for columnID, orderVal := range orders {
