@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { 
-  DndContext, 
-  DragOverlay, 
-  useSensor, 
-  useSensors, 
-  PointerSensor, 
+import {
+  DndContext,
+  DragOverlay,
+  useSensor,
+  useSensors,
+  PointerSensor,
   type DragEndEvent,
   type DragStartEvent,
   useDraggable,
@@ -50,16 +50,16 @@ function getCleanPreview(email: Email): string {
   return cleaned.slice(0, 100);
 }
 
-function DraggableEmailCard({ 
-  email, 
-  renderCardActions, 
+function DraggableEmailCard({
+  email,
+  renderCardActions,
   onClick,
   summary,
   summaryLoading,
   onRequestSummary,
   columnId
 }: {
-  email: Email; 
+  email: Email;
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
   onClick?: (emailId: string) => void;
   summary?: string;
@@ -81,11 +81,15 @@ function DraggableEmailCard({
         group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm transition-all duration-200
         bg-white dark:bg-[#1A1D21] border-gray-100 dark:border-gray-800
         hover:shadow-md hover:border-blue-200 dark:hover:border-blue-900/30
-        cursor-grab active:cursor-grabbing touch-none
+        cursor-grab active:cursor-grabbing touch-none overflow-hidden
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
       `}
       onClick={() => onClick?.(email.id)}
     >
+      {/* Unread Indicator */}
+      {!email.is_read && (
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
+      )}
       <div className="flex justify-between items-start gap-2">
         <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate flex-1">
           {email.from}
@@ -94,11 +98,11 @@ function DraggableEmailCard({
           {new Date(email.received_at).toLocaleDateString()}
         </div>
       </div>
-      
+
       <div className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
         {email.subject}
       </div>
-      
+
       <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
         {getCleanPreview(email)}
       </div>
@@ -137,7 +141,7 @@ function DraggableEmailCard({
             <span className="text-[10px]">Summary</span>
           </button>
         )}
-        
+
         {/* Other Action Buttons (Snooze/Unsnooze) */}
         <div className="flex gap-2">
           {renderCardActions?.(email, columnId)}
@@ -147,12 +151,12 @@ function DraggableEmailCard({
   );
 }
 
-function DroppableColumn({ 
-  column, 
+function DroppableColumn({
+  column,
   children,
   onPageChange
-}: { 
-  column: KanbanColumn; 
+}: {
+  column: KanbanColumn;
   children: React.ReactNode;
   onPageChange?: (colId: string, dir: 1 | -1) => void;
 }) {
@@ -161,13 +165,13 @@ function DroppableColumn({
     data: { column, type: "column" }
   });
 
-  const currentPage = (column.offset !== undefined && column.limit) 
-    ? Math.floor(column.offset / column.limit) + 1 
+  const currentPage = (column.offset !== undefined && column.limit)
+    ? Math.floor(column.offset / column.limit) + 1
     : 1;
 
   // Determine column color accent based on ID
   const getAccentColor = (id: string) => {
-    switch(id) {
+    switch (id) {
       case 'inbox': return 'bg-blue-500';
       case 'todo': return 'bg-purple-500';
       case 'done': return 'bg-green-500';
@@ -230,18 +234,18 @@ function DroppableColumn({
   );
 }
 
-export default function KanbanBoard({ 
-  columns, 
-  onEmailDrop, 
-  renderCardActions, 
-  onPageChange, 
+export default function KanbanBoard({
+  columns,
+  onEmailDrop,
+  renderCardActions,
+  onPageChange,
   onEmailClick,
   emailSummaries = {},
   onRequestSummary,
   isLoading = false
 }: KanbanBoardProps) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
-  
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -266,7 +270,7 @@ export default function KanbanBoard({
     let targetColumnId = over.id as string;
 
     const overType = over.data.current?.type;
-    
+
     if (overType === "email") {
       for (const col of columns) {
         if (col.emails.some(e => e.id === targetColumnId)) {
@@ -277,16 +281,16 @@ export default function KanbanBoard({
     }
 
     const isValidColumn = columns.some(c => c.id === targetColumnId);
-    
+
     if (isValidColumn && activeEmail) {
-        onEmailDrop(activeId, targetColumnId);
+      onEmailDrop(activeId, targetColumnId);
     }
   };
 
   return (
-    <DndContext 
-      sensors={sensors} 
-      onDragStart={handleDragStart} 
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 w-full h-full p-3 bg-white dark:bg-[#111418] relative">
@@ -300,9 +304,9 @@ export default function KanbanBoard({
           </div>
         )}
         {columns.map((col) => (
-          <DroppableColumn 
-            key={col.id} 
-            column={col} 
+          <DroppableColumn
+            key={col.id}
+            column={col}
             onPageChange={onPageChange}
           >
             {col.emails.map((email) => (
@@ -320,7 +324,7 @@ export default function KanbanBoard({
           </DroppableColumn>
         ))}
       </div>
-      
+
       {createPortal(
         <DragOverlay dropAnimation={{
           duration: 250,
@@ -330,7 +334,12 @@ export default function KanbanBoard({
             <div className="
               w-[320px] bg-white dark:bg-[#1A1D21] rounded-xl shadow-2xl p-4 
               border-2 border-blue-500 cursor-grabbing rotate-3 scale-105 z-50
+              relative overflow-hidden
             ">
+              {/* Unread Indicator */}
+              {!activeEmail.is_read && (
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
+              )}
               <div className="flex justify-between items-start gap-2 mb-2">
                 <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
                   {activeEmail.from}
