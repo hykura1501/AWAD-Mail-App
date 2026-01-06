@@ -23,6 +23,15 @@ type SendEmailRequest struct {
 	Subject string                  `form:"subject"`
 	Body    string                  `form:"body"`
 	Files   []*multipart.FileHeader `form:"files"`
+	// Inline images with Content-ID for embedding in HTML body
+	InlineImages     []*multipart.FileHeader `form:"inline_images"`
+	InlineImagesMeta string                  `form:"inline_images_meta"` // JSON: [{"filename":"x","content_id":"y"}]
+}
+
+// InlineImageMeta represents metadata for an inline image
+type InlineImageMeta struct {
+	Filename  string `json:"filename"`
+	ContentID string `json:"content_id"`
 }
 
 // BulkOperationRequest for bulk email operations

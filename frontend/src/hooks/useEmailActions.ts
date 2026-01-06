@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
-import type { Email } from "@/types/email";
+import type { Email, Attachment } from "@/types/email";
+import { API_BASE_URL } from "@/config/api";
+import { getAccessToken } from "@/lib/api-client";
 
 export interface ComposeData {
   to: string[];
@@ -8,6 +10,14 @@ export interface ComposeData {
   body: string;
   quotedContent: string;
   quotedHeader: string;
+  /** Original email ID for resolving inline images */
+  originalEmailId?: string;
+  /** Original attachments for resolving cid: URLs */
+  originalAttachments?: Attachment[];
+  /** When true, forward all original attachments (not just inline images) */
+  forwardAttachments?: boolean;
+  /** When true, only include inline images for reply (not regular attachments) */
+  includeInlineImages?: boolean;
 }
 
 const EMPTY_COMPOSE_DATA: ComposeData = {
@@ -17,6 +27,10 @@ const EMPTY_COMPOSE_DATA: ComposeData = {
   body: "",
   quotedContent: "",
   quotedHeader: "",
+  originalEmailId: undefined,
+  originalAttachments: undefined,
+  forwardAttachments: false,
+  includeInlineImages: false,
 };
 
 interface UseEmailActionsOptions {
@@ -79,6 +93,31 @@ function parseSender(from: string): { name: string; email: string } {
 }
 
 /**
+ * Process quoted content to replace cid: URLs with actual API URLs
+ * This allows inline images to be displayed in the compose dialog
+ */
+function processQuotedContent(
+  content: string,
+  emailId?: string,
+  attachments?: Attachment[]
+): string {
+  if (!emailId || !attachments || attachments.length === 0) return content;
+
+  let processedContent = content;
+  const token = getAccessToken();
+
+  attachments.forEach((attachment) => {
+    if (attachment.content_id) {
+      const cid = `cid:${attachment.content_id}`;
+      const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachment.id}?token=${token}`;
+      processedContent = processedContent.split(cid).join(url);
+    }
+  });
+
+  return processedContent;
+}
+
+/**
  * Custom hook for email compose actions (reply, reply all, forward)
  * 
  * Centralizes the logic for preparing compose dialog with quoted content.
@@ -113,13 +152,19 @@ export function useEmailActions({
     const originalBody = email.body || email.preview || "";
     const forwardHeader = `---------- Forwarded message ---------\nFrom: ${email.from}\nDate: ${new Date(email.received_at).toLocaleString()}\nSubject: ${email.subject}\nTo: ${email.to.join(", ")}`;
 
+    // Process inline images in quoted content
+    const processedBody = processQuotedContent(originalBody, email.id, email.attachments);
+
     setComposeData({
       to: [],
       cc: [],
       subject: `Fwd: ${email.subject}`,
       body: "",
-      quotedContent: originalBody,
+      quotedContent: processedBody,
       quotedHeader: forwardHeader,
+      originalEmailId: email.id,
+      originalAttachments: email.attachments,
+      forwardAttachments: true, // Forward all attachments
     });
     setIsComposeOpen(true);
   }, []);
@@ -133,13 +178,19 @@ export function useEmailActions({
     const originalBody = email.body || email.preview || "";
     const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
 
+    // Process inline images in quoted content
+    const processedBody = processQuotedContent(originalBody, email.id, email.attachments);
+
     setComposeData({
       to: [senderEmail],
       cc: [],
       subject: `Re: ${email.subject}`,
       body: "",
-      quotedContent: originalBody,
+      quotedContent: processedBody,
       quotedHeader: quoteHeader,
+      originalEmailId: email.id,
+      originalAttachments: email.attachments,
+      includeInlineImages: true, // Download inline images for quoted content
     });
     setIsComposeOpen(true);
   }, []);
@@ -171,13 +222,19 @@ export function useEmailActions({
     const originalBody = email.body || email.preview || "";
     const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
 
+    // Process inline images in quoted content
+    const processedBody = processQuotedContent(originalBody, email.id, email.attachments);
+
     setComposeData({
       to: [senderEmail],
       cc: uniqueCcList,
       subject: `Re: ${email.subject}`,
       body: "",
-      quotedContent: originalBody,
+      quotedContent: processedBody,
       quotedHeader: quoteHeader,
+      originalEmailId: email.id,
+      originalAttachments: email.attachments,
+      includeInlineImages: true, // Download inline images for quoted content
     });
     setIsComposeOpen(true);
   }, [userEmail]);

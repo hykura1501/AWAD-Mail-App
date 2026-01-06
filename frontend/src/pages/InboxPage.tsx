@@ -297,6 +297,10 @@ export default function InboxPage() {
         initialBody={composeData.body}
         quotedContent={composeData.quotedContent}
         quotedHeader={composeData.quotedHeader}
+        originalEmailId={composeData.originalEmailId}
+        originalAttachments={composeData.originalAttachments}
+        forwardAttachments={composeData.forwardAttachments}
+        includeInlineImages={composeData.includeInlineImages}
       />
 
       {/* Task Drawer */}

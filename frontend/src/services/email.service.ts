@@ -1,12 +1,36 @@
 import apiClient from "@/lib/api-client";
+import { getAccessToken } from "@/lib/api-client";
+import { API_BASE_URL } from "@/config/api";
 import type {
   Mailbox,
   Email,
   EmailsResponse,
   KanbanColumnConfig,
+  Attachment,
 } from "@/types/email";
 
 export const emailService = {
+  /**
+   * Download an attachment as a File object (for forwarding emails)
+   * @param emailId - The email ID containing the attachment
+   * @param attachment - The attachment metadata
+   * @returns File object that can be used in FormData for sending
+   */
+  getAttachmentAsFile: async (
+    emailId: string,
+    attachment: Attachment
+  ): Promise<File> => {
+    const token = getAccessToken();
+    const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachment.id}?token=${token}`;
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download attachment: ${attachment.name}`);
+    }
+    
+    const blob = await response.blob();
+    return new File([blob], attachment.name, { type: attachment.mime_type });
+  },
   getEmailsByStatus: async (
     status: string,
     limit = 50,
@@ -92,13 +116,19 @@ export const emailService = {
     return response.data;
   },
 
+  /**
+   * Send an email with optional attachments and inline images
+   * 
+   * @param inlineImages - Inline images with contentId for CID embedding
+   */
   sendEmail: async (
     to: string,
     cc: string,
     bcc: string,
     subject: string,
     body: string,
-    files: File[] = []
+    files: File[] = [],
+    inlineImages: { file: File; contentId: string }[] = []
   ): Promise<void> => {
     const formData = new FormData();
     formData.append("to", to);
@@ -106,9 +136,26 @@ export const emailService = {
     formData.append("bcc", bcc);
     formData.append("subject", subject);
     formData.append("body", body);
+    
+    // Regular attachments
     files.forEach((file) => {
       formData.append("files", file);
     });
+
+    // Inline images with Content-ID metadata
+    if (inlineImages.length > 0) {
+      // Send metadata as JSON
+      const inlineMetadata = inlineImages.map((img) => ({
+        filename: img.file.name,
+        content_id: img.contentId,
+      }));
+      formData.append("inline_images_meta", JSON.stringify(inlineMetadata));
+      
+      // Send files
+      inlineImages.forEach((img) => {
+        formData.append("inline_images", img.file);
+      });
+    }
 
     await apiClient.post("/emails/send", formData, {
       headers: {

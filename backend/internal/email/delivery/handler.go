@@ -2,7 +2,9 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
@@ -481,6 +483,9 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 		return
 	}
 
+	log.Printf("Handler Received - Subject: %s", req.Subject)
+	log.Printf("Handler Received - Body len: %d", len(req.Body))
+
 	user, exists := c.Get("user")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
@@ -495,7 +500,32 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 
 	userID := userData.ID
 
-	if err := h.emailUsecase.SendEmail(userID, req.To, req.Cc, req.Bcc, req.Subject, req.Body, req.Files); err != nil {
+	// Parse inline images metadata
+	var inlineImagesMeta []emaildto.InlineImageMeta
+	if req.InlineImagesMeta != "" {
+		if err := json.Unmarshal([]byte(req.InlineImagesMeta), &inlineImagesMeta); err != nil {
+			log.Printf("Failed to parse inline_images_meta: %v", err)
+		}
+	}
+
+	// Map Content-ID to files
+	inlineFilesWithCID := make(map[string]*multipart.FileHeader)
+	for _, meta := range inlineImagesMeta {
+		// Find matching file by filename
+		for _, file := range req.InlineImages {
+			if file.Filename == meta.Filename {
+				// Set Content-ID in file header for use by gmail service
+				file.Header.Set("Content-ID", meta.ContentID)
+				inlineFilesWithCID[meta.ContentID] = file
+				break
+			}
+		}
+	}
+
+	// Combine files: regular attachments + inline images (with Content-ID set)
+	allFiles := append(req.Files, req.InlineImages...)
+
+	if err := h.emailUsecase.SendEmail(userID, req.To, req.Cc, req.Bcc, req.Subject, req.Body, allFiles); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { useComposeEmail } from "@/hooks";
 import { RecipientField, AttachmentList } from "./compose";
+import type { Attachment } from "@/types/email";
 
 interface ComposeEmailProps {
   open: boolean;
@@ -24,6 +25,14 @@ interface ComposeEmailProps {
   quotedContent?: string;
   /** Header for quoted content */
   quotedHeader?: string;
+  /** Original email ID for downloading attachments */
+  originalEmailId?: string;
+  /** Original attachments to forward */
+  originalAttachments?: Attachment[];
+  /** When true, download and attach all original attachments */
+  forwardAttachments?: boolean;
+  /** When true, only download inline images for reply */
+  includeInlineImages?: boolean;
 }
 
 // Quill editor configuration
@@ -74,6 +83,10 @@ export default function ComposeEmail({
   initialBody = "",
   quotedContent = "",
   quotedHeader = "",
+  originalEmailId,
+  originalAttachments,
+  forwardAttachments = false,
+  includeInlineImages = false,
 }: ComposeEmailProps) {
   // Use custom hook for all form logic
   const compose = useComposeEmail({
@@ -85,6 +98,10 @@ export default function ComposeEmail({
     initialBody,
     quotedContent,
     quotedHeader,
+    originalEmailId,
+    originalAttachments,
+    forwardAttachments,
+    includeInlineImages,
   });
 
   const {

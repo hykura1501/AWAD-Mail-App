@@ -2,6 +2,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
 import { toast } from "sonner";
+import type { Attachment } from "@/types/email";
+import {
+  type InlineImage,
+  downloadAllInlineImages,
+  replaceApiUrlsWithCid,
+  getRegularAttachments,
+} from "@/utils/inlineImageUtils";
 
 export interface UseComposeEmailOptions {
   open: boolean;
@@ -12,6 +19,14 @@ export interface UseComposeEmailOptions {
   initialBody?: string;
   quotedContent?: string;
   quotedHeader?: string;
+  /** Original email ID for downloading attachments */
+  originalEmailId?: string;
+  /** Original attachments metadata */
+  originalAttachments?: Attachment[];
+  /** When true, download and attach all original attachments on open */
+  forwardAttachments?: boolean;
+  /** When true, only download inline images (for reply) */
+  includeInlineImages?: boolean;
 }
 
 export interface RecipientState {
@@ -92,6 +107,10 @@ export function useComposeEmail({
   initialBody = "",
   quotedContent = "",
   quotedHeader = "",
+  originalEmailId,
+  originalAttachments,
+  forwardAttachments = false,
+  includeInlineImages = false,
 }: UseComposeEmailOptions): UseComposeEmailReturn {
   const queryClient = useQueryClient();
 
@@ -107,6 +126,7 @@ export function useComposeEmail({
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [inlineImages, setInlineImages] = useState<InlineImage[]>([]);
 
   // Quoted content state
   const [quotedHtml, setQuotedHtml] = useState("");
@@ -131,6 +151,7 @@ export function useComposeEmail({
     setSubject("");
     setBody("");
     setAttachments([]);
+    setInlineImages([]);
     setShowCc(false);
     setShowBcc(false);
     setIsMinimized(false);
@@ -153,6 +174,54 @@ export function useComposeEmail({
           setQuotedHeaderText(quotedHeader);
         }, 0);
       }
+
+      // Download attachments for forwarding (all) or reply (inline only)
+      const shouldDownload = (forwardAttachments || includeInlineImages) && 
+                             originalEmailId && 
+                             originalAttachments && 
+                             originalAttachments.length > 0;
+      
+      if (shouldDownload) {
+        const downloadAllAttachments = async () => {
+          try {
+            // Download inline images (those with content_id) - needed for both forward and reply
+            const inlineImagesResult = await downloadAllInlineImages(originalEmailId!, originalAttachments!);
+            if (inlineImagesResult.length > 0) {
+              setInlineImages(inlineImagesResult);
+            }
+
+            // Download regular attachments only if forwarding (not for reply)
+            if (forwardAttachments) {
+              const regularAttachmentsMeta = getRegularAttachments(originalAttachments!);
+              if (regularAttachmentsMeta.length > 0) {
+                const downloadPromises = regularAttachmentsMeta.map((attachment) =>
+                  emailService.getAttachmentAsFile(originalEmailId!, attachment)
+                );
+                
+                const results = await Promise.allSettled(downloadPromises);
+                
+                const downloadedFiles: File[] = [];
+                results.forEach((result, index) => {
+                  if (result.status === "fulfilled") {
+                    downloadedFiles.push(result.value);
+                  } else {
+                    console.error(`Failed to download attachment: ${regularAttachmentsMeta[index].name}`, result.reason);
+                  }
+                });
+
+                if (downloadedFiles.length > 0) {
+                  setAttachments(downloadedFiles);
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Failed to download attachments:", error);
+            toast.error("Không thể tải tệp đính kèm");
+          }
+        };
+
+        downloadAllAttachments();
+      }
     }
     // Dialog just closed - reset form
     else if (!open && prevOpen.current) {
@@ -160,7 +229,7 @@ export function useComposeEmail({
     }
 
     prevOpen.current = open;
-  }, [open, initialTo, initialCc, initialSubject, initialBody, quotedContent, quotedHeader, resetForm]);
+  }, [open, initialTo, initialCc, initialSubject, initialBody, quotedContent, quotedHeader, resetForm, forwardAttachments, includeInlineImages, originalEmailId, originalAttachments]);
 
   // Send email mutation
   const sendMutation = useMutation({
@@ -193,13 +262,20 @@ export function useComposeEmail({
         processedBody = processedBody + quoteWrapper;
       }
 
+      // Replace API URLs with cid: references for inline images
+      // Backend will use Content-ID to create proper multipart/related structure
+      if (originalEmailId && originalAttachments && inlineImages.length > 0) {
+        processedBody = replaceApiUrlsWithCid(processedBody, originalEmailId, originalAttachments);
+      }
+
       await emailService.sendEmail(
         allTo.join(", "),
         allCc.join(", "),
         allBcc.join(", "),
         subject,
         processedBody,
-        attachments
+        attachments,
+        inlineImages  // Pass inline images with contentId
       );
     },
     onSuccess: () => {
