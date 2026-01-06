@@ -11,6 +11,7 @@ type Mailbox struct {
 
 type Email struct {
 	ID          string       `json:"id"`
+	UserID      string       `json:"user_id,omitempty"`
 	MailboxID   string       `json:"mailbox_id"`
 	Status      string       `json:"status"` // inbox, todo, done, snoozed
 	From        string       `json:"from"`

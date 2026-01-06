@@ -14,6 +14,8 @@ type KanbanColumnRepository interface {
 	UpdateColumn(column *emaildomain.KanbanColumn) error
 	// Delete a column
 	DeleteColumn(userID, columnID string) error
+	// Delete a column by its primary key
+	DeleteColumnByPK(id string) error
 	// Update column order for multiple columns
 	UpdateColumnOrders(userID string, orders map[string]int) error
 }
