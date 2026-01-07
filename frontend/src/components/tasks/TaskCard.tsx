@@ -20,12 +20,15 @@ const formatDate = (dateStr?: string) => {
   if (!dateStr) return null;
   const date = new Date(dateStr);
   const now = new Date();
-  const diff = date.getTime() - now.getTime();
-  const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+  
+  // Compare by calendar date (reset time to midnight for accurate day comparison)
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const todayOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((dateOnly.getTime() - todayOnly.getTime()) / (1000 * 60 * 60 * 24));
 
-  if (days < 0) return { text: "Quá hạn", color: "text-red-500" };
-  if (days === 0) return { text: "Hôm nay", color: "text-orange-500" };
-  if (days === 1) return { text: "Ngày mai", color: "text-yellow-500" };
+  if (diffDays < 0) return { text: "Quá hạn", color: "text-red-500" };
+  if (diffDays === 0) return { text: "Hôm nay", color: "text-orange-500" };
+  if (diffDays === 1) return { text: "Ngày mai", color: "text-yellow-500" };
   return { text: date.toLocaleDateString("vi-VN"), color: "text-gray-500" };
 };
 

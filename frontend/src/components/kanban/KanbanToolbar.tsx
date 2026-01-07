@@ -23,7 +23,7 @@ export default function KanbanToolbar({
   onSettingsClick,
 }: KanbanToolbarProps) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-[#0f1724] border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+    <div className="flex items-center gap-2 px-3 py-1 bg-white dark:bg-[#0f1724] border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
       {/* Filters - scrollable container on mobile */}
       <div className="flex-1 min-w-0">
         <KanbanFilters

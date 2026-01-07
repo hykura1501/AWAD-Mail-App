@@ -26,7 +26,7 @@ export default function KanbanFilters({
   onSnoozedClick,
 }: KanbanFiltersProps) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0f1724]">
+    <div className="flex items-center gap-3 px-4 py-1.5 bg-white dark:bg-[#0f1724]">
       {/* Sort segmented control (pill-shaped) */}
       <div className="flex items-center gap-0 rounded-full border bg-transparent overflow-hidden shadow-sm">
           <Button
