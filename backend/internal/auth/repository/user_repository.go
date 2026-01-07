@@ -83,16 +83,17 @@ func (r *userRepository) DeleteRefreshTokensByUser(userID string) error {
 	return r.db.Where("user_id = ?", userID).Delete(&authdomain.RefreshToken{}).Error
 }
 
-// ReplaceRefreshToken replaces any existing refresh tokens for the user and inserts the new one.
-// We delete existing tokens first, then insert the new one to avoid ON CONFLICT issues.
+// ReplaceRefreshToken adds a new refresh token for the user without deleting existing ones.
+// This allows multi-device login - each device keeps its own refresh token.
+// Only cleans up expired tokens to prevent DB bloat.
 func (r *userRepository) ReplaceRefreshToken(token *authdomain.RefreshToken) error {
 	// Use a transaction to ensure atomicity
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		// Delete any existing refresh tokens for this user
-		if err := tx.Where("user_id = ?", token.UserID).Delete(&authdomain.RefreshToken{}).Error; err != nil {
+		// Only delete EXPIRED refresh tokens for this user (cleanup, not invalidation)
+		if err := tx.Where("user_id = ? AND expires_at < ?", token.UserID, time.Now()).Delete(&authdomain.RefreshToken{}).Error; err != nil {
 			return err
 		}
-		// Insert the new token
+		// Insert the new token (existing valid tokens remain)
 		return tx.Create(token).Error
 	})
 }

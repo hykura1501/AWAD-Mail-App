@@ -358,12 +358,19 @@ func (u *authUsecase) RefreshToken(refreshToken string) (*authdto.TokenResponse,
 	shouldRotateRefreshToken := storedToken.ExpiresAt.Sub(time.Now()) < 24*time.Hour
 
 	if shouldRotateRefreshToken {
-		// Generate new refresh token and replace old one
+		// Generate new refresh token
 		newRefreshToken, err := u.generateRefreshToken(user)
 		if err != nil {
 			return nil, err
 		}
 
+		// Delete the OLD token for this device (not all tokens)
+		if err := u.userRepo.DeleteRefreshToken(refreshToken); err != nil {
+			// Log but don't fail - token might already be gone
+			fmt.Printf("Warning: failed to delete old refresh token: %v\n", err)
+		}
+
+		// Add the new token
 		refreshTokenEntity := &authdomain.RefreshToken{
 			Token:     newRefreshToken,
 			UserID:    user.ID,
