@@ -1,10 +1,10 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { toast } from "sonner";
 import type { Email, KanbanColumnConfig, Mailbox } from "@/types/email";
 import { emailService } from "@/services/email.service";
-import { getKanbanColumnFromCache, saveKanbanColumnToCache } from "@/lib/db";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 
 const DEFAULT_LIMIT = 20;
-const BATCH_SIZE = 2;
 const DEFAULT_COLUMN_IDS = ["inbox", "todo", "done", "snoozed"] as const;
 
 export interface UseKanbanDataOptions {
@@ -20,11 +20,11 @@ export interface UseKanbanDataReturn {
   kanbanOffsets: Record<string, number>;
   kanbanColumnConfigs: KanbanColumnConfig[];
   mailboxes: Mailbox[];
-  
-  // Loading states (consolidated into Record)
+
+  // Loading states
   loadingColumns: Record<string, boolean>;
   isAnyLoading: boolean;
-  
+
   // Actions
   loadColumn: (status: string, offset: number) => Promise<void>;
   reloadAllColumns: () => Promise<void>;
@@ -32,38 +32,19 @@ export interface UseKanbanDataReturn {
   updatePage: (col: string, dir: 1 | -1) => void;
   setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>>;
   setKanbanColumnConfigs: React.Dispatch<React.SetStateAction<KanbanColumnConfig[]>>;
-  
+
   // Constants
   limit: number;
 }
 
 /**
- * Custom hook for Kanban board data management
- * 
- * Handles:
- * - Column data loading with IndexedDB cache-first strategy
- * - Pagination per column
- * - Optimistic drag-drop updates
- * - Batch loading to avoid overwhelming backend
- * 
- * @example
- * ```tsx
- * const { kanbanEmails, loadingColumns, moveEmail } = useKanbanData({
- *   onInitComplete: (emailIds) => queueSummaries(emailIds),
- * });
- * ```
+ * Custom hook for Kanban board data management using React Query
  */
 export function useKanbanData({
   limit = DEFAULT_LIMIT,
   onInitComplete,
 }: UseKanbanDataOptions = {}): UseKanbanDataReturn {
-  // Emails data per column
-  const [kanbanEmails, setKanbanEmails] = useState<Record<string, Email[]>>({
-    inbox: [],
-    todo: [],
-    done: [],
-    snoozed: [],
-  });
+  const queryClient = useQueryClient();
 
   // Pagination offsets per column
   const [kanbanOffsets, setKanbanOffsets] = useState<Record<string, number>>({
@@ -73,95 +54,101 @@ export function useKanbanData({
     snoozed: 0,
   });
 
-  // Consolidated loading state (replaces 4 separate useState)
-  const [loadingColumns, setLoadingColumns] = useState<Record<string, boolean>>({
-    inbox: true,
-    todo: true,
-    done: true,
-    snoozed: true,
+  // 1. Fetch Column Configs
+  const { data: kanbanColumnConfigs = [] } = useQuery({
+    queryKey: ['kanbanColumns'],
+    queryFn: () => emailService.getKanbanColumns(),
+    staleTime: 1000 * 60 * 5, // 5 mins
   });
 
-  // Column configuration
-  const [kanbanColumnConfigs, setKanbanColumnConfigs] = useState<KanbanColumnConfig[]>([]);
-  
-  // Mailboxes for label mapping
-  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
+  // 2. Fetch Mailboxes
+  const { data: mailboxes = [] } = useQuery({
+    queryKey: ['mailboxes'],
+    queryFn: () => emailService.getAllMailboxes(),
+    staleTime: 1000 * 60 * 60, // 1 hour
+  });
 
-  // Helper to set loading state for a column
-  const setColumnLoading = useCallback((columnId: string, loading: boolean) => {
-    setLoadingColumns((prev) => ({ ...prev, [columnId]: loading }));
-  }, []);
-
-  // Load single column with cache-first strategy
-  const loadColumn = useCallback(async (status: string, offset: number) => {
-    try {
-      setColumnLoading(status, true);
-
-      // 1. Try cache first for instant display (only for first page)
-      if (offset === 0) {
-        const cachedEmails = await getKanbanColumnFromCache(status);
-        if (cachedEmails && cachedEmails.length > 0) {
-          setKanbanEmails((prev) => ({ ...prev, [status]: cachedEmails }));
-          setColumnLoading(status, false);
-        }
-      }
-
-      // 2. Fetch fresh data from API
-      const data = await emailService.getEmailsByStatus(status, limit, offset);
-
-      // 3. Update state with fresh data
-      setKanbanEmails((prev) => ({ ...prev, [status]: data.emails }));
-
-      // 4. Save to cache (only for first page)
-      if (offset === 0) {
-        saveKanbanColumnToCache(status, data.emails);
-      }
-    } finally {
-      setColumnLoading(status, false);
-    }
-  }, [limit, setColumnLoading]);
-
-  // Reload all columns in batches
-  const reloadAllColumns = useCallback(async () => {
+  // 3. Determine all active columns to query
+  const allColumnIds = useMemo(() => {
     const defaultIds = new Set(DEFAULT_COLUMN_IDS);
-    const customColumnIds = kanbanColumnConfigs
-      .filter((c) => !defaultIds.has(c.column_id as typeof DEFAULT_COLUMN_IDS[number]))
+    const customIds = kanbanColumnConfigs
+      .filter((c) => !defaultIds.has(c.column_id as any))
       .map((c) => c.column_id);
-    
-    const allColumnIds = [...DEFAULT_COLUMN_IDS, ...customColumnIds];
+    return [...DEFAULT_COLUMN_IDS, ...customIds];
+  }, [kanbanColumnConfigs]);
 
-    for (let i = 0; i < allColumnIds.length; i += BATCH_SIZE) {
-      const batch = allColumnIds.slice(i, i + BATCH_SIZE);
-      await Promise.all(
-        batch.map((colId) => loadColumn(colId, kanbanOffsets[colId] ?? 0))
-      );
+  // 4. Fetch Emails for all columns using useQueries
+  const emailQueries = useQueries({
+    queries: allColumnIds.map((colId) => ({
+      queryKey: ['emails', colId, limit, kanbanOffsets[colId] || 0],
+      queryFn: () => emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] || 0),
+      // Keep data fresh for a bit, but revalidate in background
+      staleTime: 1000 * 30, // 30 seconds fresh
+    })),
+  });
+
+  // 5. Derive kanbanEmails and loading states
+  const { kanbanEmails, loadingColumns, isAnyLoading } = useMemo(() => {
+    const emails: Record<string, Email[]> = {};
+    const loading: Record<string, boolean> = {};
+    let anyLoading = false;
+
+    allColumnIds.forEach((colId, index) => {
+      const query = emailQueries[index];
+      // Note: query.data is { emails: Email[], total: number }
+      emails[colId] = query.data?.emails || [];
+      loading[colId] = query.isLoading;
+      if (query.isLoading) anyLoading = true;
+    });
+
+    return { kanbanEmails: emails, loadingColumns: loading, isAnyLoading: anyLoading };
+  }, [allColumnIds, emailQueries]);
+
+  // 6. Trigger onInitComplete when data is fully loaded for the first time
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!isAnyLoading && !hasInitialized) {
+      // Collect all IDs
+      const allIds = Object.values(kanbanEmails).flat().map(e => e.id);
+      if (allIds.length > 0) {
+        onInitComplete?.(allIds);
+        setHasInitialized(true);
+      }
     }
-  }, [kanbanColumnConfigs, kanbanOffsets, loadColumn]);
+  }, [isAnyLoading, hasInitialized, kanbanEmails, onInitComplete]);
 
-  // Handle page change for a column
+  // Actions
+
   const updatePage = useCallback((col: string, dir: 1 | -1) => {
     setKanbanOffsets((prev) => {
       const current = prev[col] ?? 0;
       const newOffset = Math.max(0, current + dir * limit);
-      
-      // Load the new page
-      loadColumn(col, newOffset).catch((error) => {
-        console.error("Error loading Kanban column:", error);
-      });
-      
       return { ...prev, [col]: newOffset };
     });
-  }, [limit, loadColumn]);
+  }, [limit]);
 
-  // Optimistic update when moving email
+  // loadColumn just invalidates the query for that column/offset
+  const loadColumn = useCallback(async (status: string, offset: number) => {
+    await queryClient.invalidateQueries({
+      queryKey: ['emails', status, limit, offset]
+    });
+  }, [queryClient, limit]);
+
+  const reloadAllColumns = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['emails'] });
+    await queryClient.invalidateQueries({ queryKey: ['kanbanColumns'] });
+  }, [queryClient]);
+
   const moveEmail = useCallback((
     emailId: string,
     targetColumnId: string,
     sourceColumnId?: string
   ) => {
-    // Find source if not provided
+    // Identify source column if not provided (scan current derived emails)
     let foundSourceColumnId = sourceColumnId;
     if (!foundSourceColumnId) {
+      // Scan to find source
       for (const [colId, emails] of Object.entries(kanbanEmails)) {
         if (emails?.find((e) => e.id === emailId)) {
           foundSourceColumnId = colId;
@@ -170,121 +157,28 @@ export function useKanbanData({
       }
     }
 
-    // Optimistic update
-    setKanbanEmails((prev) => {
-      let movedEmail: Email | undefined;
-      const newEmails: Record<string, Email[]> = {};
-
-      // Remove email from all columns
-      Object.entries(prev).forEach(([col, emails]) => {
-        if (!emails) {
-          newEmails[col] = [];
-          return;
-        }
-        const filtered = emails.filter((e) => {
-          if (e.id === emailId) {
-            movedEmail = e;
-            return false;
-          }
-          return true;
-        });
-        newEmails[col] = filtered;
+    emailService.moveEmailToMailbox(emailId, targetColumnId, foundSourceColumnId)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['emails'] });
+        toast.success("Đã di chuyển email");
+      })
+      .catch((err) => {
+        console.error(err);
+        toast.error('Gặp lỗi khi di chuyển mail');
       });
 
-      // Add to target column
-      if (movedEmail) {
-        if (!newEmails[targetColumnId]) {
-          newEmails[targetColumnId] = [];
-        }
-        movedEmail.mailbox_id = targetColumnId;
-        newEmails[targetColumnId] = [movedEmail, ...newEmails[targetColumnId]];
-      }
+    // Trigger immediate invalidation to start refetching (optimistic-like responsiveness)
+    queryClient.invalidateQueries({ queryKey: ['emails'] });
 
-      return newEmails;
-    });
+  }, [queryClient, kanbanEmails]); // Added kanbanEmails dependency for finding source if needed
 
-    // Call API (fire and forget, rely on optimistic update)
-    emailService.moveEmailToMailbox(emailId, targetColumnId, foundSourceColumnId).catch((error) => {
-      console.error("Error moving email:", error);
-      // Could implement rollback here if needed
-    });
-  }, [kanbanEmails]);
+  // Compatibility shims
+  const setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>> = () => {
+    console.warn("setKanbanEmails shim called - no-op in React Query mode");
+  };
 
-  // Initial load effect
-  useEffect(() => {
-    const initKanban = async () => {
-      try {
-        // 1. IMMEDIATELY load from IndexedDB cache for instant display
-        console.log('[KanbanData] Loading from IndexedDB cache first...');
-        const cachedEmailIds: string[] = [];
-        
-        for (const colId of DEFAULT_COLUMN_IDS) {
-          const cachedEmails = await getKanbanColumnFromCache(colId);
-          if (cachedEmails && cachedEmails.length > 0) {
-            setKanbanEmails((prev) => ({ ...prev, [colId]: cachedEmails }));
-            setLoadingColumns((prev) => ({ ...prev, [colId]: false }));
-            cachedEmailIds.push(...cachedEmails.map((e: Email) => e.id));
-            console.log(`[KanbanData] Loaded ${cachedEmails.length} cached emails for "${colId}"`);
-          }
-        }
-        
-        // If we have cached data, trigger onInitComplete early for summaries
-        if (cachedEmailIds.length > 0) {
-          console.log(`[KanbanData] Triggering early onInitComplete with ${cachedEmailIds.length} cached emails`);
-          onInitComplete?.(cachedEmailIds);
-        }
-
-        // 2. Fetch column config + mailboxes from API
-        const [columns, mbs] = await Promise.all([
-          emailService.getKanbanColumns(),
-          emailService.getAllMailboxes(),
-        ]);
-        setKanbanColumnConfigs(columns);
-        setMailboxes(mbs);
-
-        // 3. Determine all column IDs (default + custom)
-        const defaultIds = new Set(DEFAULT_COLUMN_IDS);
-        const allColumnIds = [
-          ...DEFAULT_COLUMN_IDS,
-          ...columns.filter((c) => !defaultIds.has(c.column_id as typeof DEFAULT_COLUMN_IDS[number])).map((c) => c.column_id),
-        ];
-
-        // 4. Fetch fresh data from API (background refresh)
-        console.log('[KanbanData] Fetching fresh data from API...');
-        const allLoadedEmailIds: string[] = [];
-
-        for (let i = 0; i < allColumnIds.length; i += BATCH_SIZE) {
-          const batch = allColumnIds.slice(i, i + BATCH_SIZE);
-          const results = await Promise.all(
-            batch.map(async (colId) => {
-              const data = await emailService.getEmailsByStatus(colId, limit, 0);
-              setKanbanEmails((prev) => ({ ...prev, [colId]: data.emails }));
-              setLoadingColumns((prev) => ({ ...prev, [colId]: false }));
-              // Save to cache for next time
-              saveKanbanColumnToCache(colId, data.emails);
-              return data.emails.map((e) => e.id);
-            })
-          );
-          results.forEach((ids) => allLoadedEmailIds.push(...ids));
-        }
-
-        // 5. Callback with all freshly loaded email IDs (for summary queueing if not done earlier)
-        if (cachedEmailIds.length === 0) {
-          onInitComplete?.(allLoadedEmailIds);
-        }
-        
-        console.log(`[KanbanData] Init complete, loaded ${allLoadedEmailIds.length} emails from API`);
-      } catch (error) {
-        console.error("Error initializing Kanban:", error);
-      }
-    };
-
-    initKanban();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Compute isAnyLoading
-  const isAnyLoading = Object.values(loadingColumns).some((v) => v);
+  const setKanbanColumnConfigs: React.Dispatch<React.SetStateAction<KanbanColumnConfig[]>> = () => {
+  };
 
   return {
     kanbanEmails,
