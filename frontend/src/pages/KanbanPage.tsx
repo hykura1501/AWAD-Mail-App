@@ -29,7 +29,7 @@ export default function KanbanPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAppSelector((state) => state.auth.user);
-  
+
   // Initialize FCM for push notifications
   useFCM();
 
@@ -99,9 +99,10 @@ export default function KanbanPage() {
       queueSummaries(emailIds);
     },
   });
-  
+
   // State cho popup chi tiết email
   const [detailEmailId, setDetailEmailId] = useState<string | null>(null);
+  const [focusedEmailId, setFocusedEmailId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"mailbox" | "kanban">("kanban");
   const [mobileSelectedColumn, setMobileSelectedColumn] =
     useState<string>("inbox");
@@ -234,7 +235,7 @@ export default function KanbanPage() {
           console.error("Error reloading Kanban via SSE:", error);
         });
         // Note: mailboxes are now managed by useKanbanData hook
-        
+
         // Also invalidate React Query for other pages
         queryClient.invalidateQueries({
           queryKey: ["emails"],
@@ -257,6 +258,101 @@ export default function KanbanPage() {
       emailService.watchMailbox().catch(console.error);
     }
   }, [user]);
+
+  // Keyboard navigation handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if input is focused, modifiers are pressed, or detail popup is open
+      if (
+        document.activeElement?.tagName === "INPUT" ||
+        document.activeElement?.tagName === "TEXTAREA" ||
+        (document.activeElement as HTMLElement)?.isContentEditable ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey ||
+        detailEmailId
+      ) {
+        return;
+      }
+
+      if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault(); // Prevent scrolling
+
+        // If nothing is focused, focus the first email of the first column
+        if (!focusedEmailId) {
+          // Find first non-empty column
+          const firstCol = kanbanColumns.find(c => c.emails.length > 0);
+          if (firstCol && firstCol.emails[0]) {
+            setFocusedEmailId(firstCol.emails[0].id);
+          }
+          return;
+        }
+
+        // Find current position of focused email
+        let colIndex = -1;
+        let rowIndex = -1;
+
+        kanbanColumns.some((col, cIdx) => {
+          const rIdx = col.emails.findIndex((e) => e.id === focusedEmailId);
+          if (rIdx !== -1) {
+            colIndex = cIdx;
+            rowIndex = rIdx;
+            return true;
+          }
+          return false;
+        });
+
+        // ... rest of logic
+
+
+        // If currently focused email is not found in visible columns (e.g. after pagination), reset
+        if (colIndex === -1) {
+          const firstCol = kanbanColumns.find(c => c.emails.length > 0);
+          if (firstCol && firstCol.emails[0]) {
+            setFocusedEmailId(firstCol.emails[0].id);
+          }
+          return;
+        }
+
+        // Handle navigation
+        if (e.key === "ArrowDown") {
+          const nextEmail = kanbanColumns[colIndex].emails[rowIndex + 1];
+          if (nextEmail) setFocusedEmailId(nextEmail.id);
+        } else if (e.key === "ArrowUp") {
+          const prevEmail = kanbanColumns[colIndex].emails[rowIndex - 1];
+          if (prevEmail) setFocusedEmailId(prevEmail.id);
+        } else if (e.key === "ArrowRight") {
+          // Move to next column
+          // Skip empty columns if possible, or settle on empty one? 
+          // Usually better to find next column with content or just next column.
+          // Let's just move to next column and clamp index.
+          if (colIndex < kanbanColumns.length - 1) {
+            const nextCol = kanbanColumns[colIndex + 1];
+            if (nextCol.emails.length > 0) {
+              const nextRowIndex = Math.min(rowIndex, nextCol.emails.length - 1);
+              setFocusedEmailId(nextCol.emails[nextRowIndex].id);
+            }
+          }
+        } else if (e.key === "ArrowLeft") {
+          if (colIndex > 0) {
+            const prevCol = kanbanColumns[colIndex - 1];
+            if (prevCol.emails.length > 0) {
+              const prevRowIndex = Math.min(rowIndex, prevCol.emails.length - 1);
+              setFocusedEmailId(prevCol.emails[prevRowIndex].id);
+            }
+          }
+        }
+      } else if (e.key === "Enter") {
+        if (focusedEmailId) {
+          e.preventDefault();
+          setDetailEmailId(focusedEmailId);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusedEmailId, kanbanColumns, detailEmailId]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-[#111418] text-gray-900 dark:text-white overflow-hidden font-sans transition-colors duration-200">
@@ -288,6 +384,7 @@ export default function KanbanPage() {
               emailSummaries={summaryStates}
               onRequestSummary={handleRequestSummary}
               isLoading={isAnyLoading}
+              focusedEmailId={focusedEmailId}
               // Use the columnId passed from KanbanBoard so the card actions
               // reflect the column the card is currently rendered in (not the
               // email.mailbox_id which may be stale). Also update mailbox_id
@@ -332,9 +429,9 @@ export default function KanbanPage() {
                   }}
                 />
               )}
-               onEmailClick={(emailId) => setDetailEmailId(emailId)}
-               highlightedEmailId={highlightedEmailId}
-             />
+              onEmailClick={(emailId) => setDetailEmailId(emailId)}
+              highlightedEmailId={highlightedEmailId}
+            />
           </div>
         </div>
 
@@ -342,9 +439,8 @@ export default function KanbanPage() {
         <div className="lg:hidden h-full">
           {/* Mailbox Drawer */}
           <div
-            className={`absolute inset-y-0 left-0 w-[280px] bg-gray-50 dark:bg-[#111418] border-r border-gray-200 dark:border-gray-800 transform transition-transform duration-300 z-30 ${
-              mobileView === "mailbox" ? "translate-x-0" : "-translate-x-full"
-            }`}
+            className={`absolute inset-y-0 left-0 w-[280px] bg-gray-50 dark:bg-[#111418] border-r border-gray-200 dark:border-gray-800 transform transition-transform duration-300 z-30 ${mobileView === "mailbox" ? "translate-x-0" : "-translate-x-full"
+              }`}
           >
             <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -572,7 +668,7 @@ export default function KanbanPage() {
           try {
             // Call API first to get target column
             const { targetColumn } = await emailService.unsnoozeEmail(emailId);
-            
+
             // Optimistic update - move to target column
             setKanbanEmails((prev) => {
               let movedEmail: Email | undefined;
@@ -599,7 +695,7 @@ export default function KanbanPage() {
               }
               return newEmails;
             });
-            
+
             // Refresh target column and snoozed column from server
             loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
             loadKanbanColumn("snoozed", kanbanOffsets.snoozed);

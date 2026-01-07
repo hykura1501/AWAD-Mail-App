@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { 
-  DndContext, 
-  DragOverlay, 
-  useSensor, 
-  useSensors, 
-  PointerSensor, 
+import {
+  DndContext,
+  DragOverlay,
+  useSensor,
+  useSensors,
+  PointerSensor,
   type DragEndEvent,
   type DragStartEvent,
   useDraggable,
@@ -36,19 +36,21 @@ export type KanbanBoardProps = {
   onRequestSummary?: (emailId: string) => void;
   isLoading?: boolean;
   highlightedEmailId?: string | null;
+  focusedEmailId?: string | null;
 };
 
-function DraggableEmailCard({ 
-  email, 
-  renderCardActions, 
+function DraggableEmailCard({
+  email,
+  renderCardActions,
   onClick,
   summary,
   summaryLoading,
   onRequestSummary,
   columnId,
-  isHighlighted
+  isHighlighted,
+  ...props
 }: {
-  email: Email; 
+  email: Email;
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
   onClick?: (emailId: string) => void;
   summary?: string;
@@ -56,15 +58,33 @@ function DraggableEmailCard({
   onRequestSummary?: (emailId: string) => void;
   columnId?: string;
   isHighlighted?: boolean;
+  isFocused?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: email.id,
     data: { email, type: "email", columnId: email.mailbox_id }
   });
 
+  const elementRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (props.isFocused && elementRef.current) {
+      elementRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest'
+      });
+    }
+  }, [props.isFocused]);
+
+  const setMergedRef = (node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    elementRef.current = node;
+  };
+
   return (
     <div
-      ref={setNodeRef}
+      ref={setMergedRef}
       {...listeners}
       {...attributes}
       data-email-id={email.id}
@@ -76,6 +96,7 @@ function DraggableEmailCard({
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
         ${!email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""}
         ${isHighlighted ? "email-highlight ring-2 ring-blue-500" : ""}
+        ${props.isFocused ? "ring-2 ring-indigo-500 z-10" : ""}
       `}
       onClick={() => onClick?.(email.id)}
     >
@@ -85,11 +106,10 @@ function DraggableEmailCard({
           {!email.is_read && (
             <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" title="Chưa đọc" />
           )}
-          <div className={`text-xs truncate flex-1 ${
-            !email.is_read 
-              ? "font-bold text-gray-800 dark:text-gray-100" 
-              : "font-medium text-gray-500 dark:text-gray-400"
-          }`}>
+          <div className={`text-xs truncate flex-1 ${!email.is_read
+            ? "font-bold text-gray-800 dark:text-gray-100"
+            : "font-medium text-gray-500 dark:text-gray-400"
+            }`}>
             {getSenderName(email)}
           </div>
         </div>
@@ -97,70 +117,71 @@ function DraggableEmailCard({
           {new Date(email.received_at).toLocaleDateString()}
         </div>
       </div>
-      
-      <div className={`text-sm leading-tight ${
-        !email.is_read 
-          ? "font-semibold text-gray-900 dark:text-gray-100" 
-          : "font-medium text-gray-800 dark:text-gray-200"
-      }`}>
+
+      <div className={`text-sm leading-tight ${!email.is_read
+        ? "font-semibold text-gray-900 dark:text-gray-100"
+        : "font-medium text-gray-800 dark:text-gray-200"
+        }`}>
         {email.subject}
       </div>
-      
+
       <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
         {getCleanPreview(email.preview || email.body)}
       </div>
 
       {/* Summary Display (when loaded) - with formatted action items */}
-      {(summary || summaryLoading) && (
-        <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-          <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3 h-3 text-blue-500 shrink-0" />
-              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">AI Summary</span>
+      {
+        (summary || summaryLoading) && (
+          <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
+            <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3 text-blue-500 shrink-0" />
+                <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">AI Summary</span>
+              </div>
+              {summaryLoading ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400">Đang phân tích...</span>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {summary?.split('\n').map((line, idx) => {
+                    // Highlight action items with colored badges (compact version)
+                    if (line.includes('📌 Cần làm:')) {
+                      return (
+                        <div key={idx} className="flex items-center gap-1 text-[10px] bg-orange-100 dark:bg-orange-900/30 px-1.5 py-0.5 rounded">
+                          <span className="text-orange-600 dark:text-orange-400 font-semibold">📌</span>
+                          <span className="text-orange-700 dark:text-orange-300 truncate">{line.replace('📌 Cần làm:', '').trim()}</span>
+                        </div>
+                      );
+                    }
+                    if (line.includes('📅 Deadline:')) {
+                      return (
+                        <div key={idx} className="flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded">
+                          <span className="text-red-600 dark:text-red-400 font-semibold">📅</span>
+                          <span className="text-red-700 dark:text-red-300 truncate">{line.replace('📅 Deadline:', '').trim()}</span>
+                        </div>
+                      );
+                    }
+                    if (line.includes('💡 Lưu ý:')) {
+                      return (
+                        <div key={idx} className="flex items-center gap-1 text-[10px] bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded">
+                          <span className="text-yellow-600 dark:text-yellow-500 font-semibold">💡</span>
+                          <span className="text-yellow-700 dark:text-yellow-300 truncate">{line.replace('💡 Lưu ý:', '').trim()}</span>
+                        </div>
+                      );
+                    }
+                    // Regular summary text
+                    return line.trim() ? (
+                      <p key={idx} className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2">{line}</p>
+                    ) : null;
+                  })}
+                </div>
+              )}
             </div>
-            {summaryLoading ? (
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-[10px] text-gray-500 dark:text-gray-400">Đang phân tích...</span>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {summary?.split('\n').map((line, idx) => {
-                  // Highlight action items with colored badges (compact version)
-                  if (line.includes('📌 Cần làm:')) {
-                    return (
-                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-orange-100 dark:bg-orange-900/30 px-1.5 py-0.5 rounded">
-                        <span className="text-orange-600 dark:text-orange-400 font-semibold">📌</span>
-                        <span className="text-orange-700 dark:text-orange-300 truncate">{line.replace('📌 Cần làm:', '').trim()}</span>
-                      </div>
-                    );
-                  }
-                  if (line.includes('📅 Deadline:')) {
-                    return (
-                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded">
-                        <span className="text-red-600 dark:text-red-400 font-semibold">📅</span>
-                        <span className="text-red-700 dark:text-red-300 truncate">{line.replace('📅 Deadline:', '').trim()}</span>
-                      </div>
-                    );
-                  }
-                  if (line.includes('💡 Lưu ý:')) {
-                    return (
-                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded">
-                        <span className="text-yellow-600 dark:text-yellow-500 font-semibold">💡</span>
-                        <span className="text-yellow-700 dark:text-yellow-300 truncate">{line.replace('💡 Lưu ý:', '').trim()}</span>
-                      </div>
-                    );
-                  }
-                  // Regular summary text
-                  return line.trim() ? (
-                    <p key={idx} className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2">{line}</p>
-                  ) : null;
-                })}
-              </div>
-            )}
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Action Buttons Row */}
       <div className="mt-2 pt-2 flex items-center gap-2 border-t border-gray-50 dark:border-gray-800/50">
@@ -177,13 +198,13 @@ function DraggableEmailCard({
             <span className="text-[10px]">Summary</span>
           </button>
         )}
-        
+
         {/* Other Action Buttons (Snooze/Unsnooze) */}
         <div className="flex gap-2">
           {renderCardActions?.(email, columnId)}
         </div>
       </div>
-    </div>
+    </div >
   );
 }
 
@@ -208,13 +229,13 @@ function SkeletonCard() {
   );
 }
 
-function DroppableColumn({ 
-  column, 
+function DroppableColumn({
+  column,
   children,
   onPageChange,
   isLoading = false
-}: { 
-  column: KanbanColumn; 
+}: {
+  column: KanbanColumn;
   children: React.ReactNode;
   onPageChange?: (colId: string, dir: 1 | -1) => void;
   isLoading?: boolean;
@@ -224,13 +245,13 @@ function DroppableColumn({
     data: { column, type: "column" }
   });
 
-  const currentPage = (column.offset !== undefined && column.limit) 
-    ? Math.floor(column.offset / column.limit) + 1 
+  const currentPage = (column.offset !== undefined && column.limit)
+    ? Math.floor(column.offset / column.limit) + 1
     : 1;
 
   // Determine column color accent based on ID
   const getAccentColor = (id: string) => {
-    switch(id) {
+    switch (id) {
       case 'inbox': return 'bg-blue-500';
       case 'todo': return 'bg-purple-500';
       case 'done': return 'bg-green-500';
@@ -302,19 +323,20 @@ function DroppableColumn({
   );
 }
 
-export default function KanbanBoard({ 
-  columns, 
-  onEmailDrop, 
-  renderCardActions, 
-  onPageChange, 
+export default function KanbanBoard({
+  columns,
+  onEmailDrop,
+  renderCardActions,
+  onPageChange,
   onEmailClick,
   emailSummaries = {},
   onRequestSummary,
   isLoading = false,
-  highlightedEmailId
+  highlightedEmailId,
+  focusedEmailId
 }: KanbanBoardProps) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
-  
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -339,7 +361,7 @@ export default function KanbanBoard({
     let targetColumnId = over.id as string;
 
     const overType = over.data.current?.type;
-    
+
     if (overType === "email") {
       for (const col of columns) {
         if (col.emails.some(e => e.id === targetColumnId)) {
@@ -350,23 +372,23 @@ export default function KanbanBoard({
     }
 
     const isValidColumn = columns.some(c => c.id === targetColumnId);
-    
+
     if (isValidColumn && activeEmail) {
-        onEmailDrop(activeId, targetColumnId);
+      onEmailDrop(activeId, targetColumnId);
     }
   };
 
   return (
-    <DndContext 
-      sensors={sensors} 
-      onDragStart={handleDragStart} 
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 w-full h-full p-3 bg-white dark:bg-[#111418] relative">
         {columns.map((col) => (
-          <DroppableColumn 
-            key={col.id} 
-            column={col} 
+          <DroppableColumn
+            key={col.id}
+            column={col}
             onPageChange={onPageChange}
             isLoading={isLoading}
           >
@@ -381,12 +403,13 @@ export default function KanbanBoard({
                 onRequestSummary={onRequestSummary}
                 columnId={col.id}
                 isHighlighted={highlightedEmailId === email.id}
+                isFocused={focusedEmailId === email.id}
               />
             ))}
           </DroppableColumn>
         ))}
       </div>
-      
+
       {createPortal(
         <DragOverlay dropAnimation={{
           duration: 250,
