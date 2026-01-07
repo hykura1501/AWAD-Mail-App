@@ -97,12 +97,46 @@ const tryClaimNotification = async (notificationId: string): Promise<boolean> =>
   }
 };
 
+// Storage key for notification preference (shared with AccountMenu)
+const NOTIFICATION_PREF_KEY = 'notifications_enabled';
+
+/**
+ * Check if notifications are enabled by user preference
+ */
+const isNotificationsEnabled = (): boolean => {
+  const stored = localStorage.getItem(NOTIFICATION_PREF_KEY);
+  if (stored !== null) {
+    return stored === 'true';
+  }
+  // Default: enabled if permission is granted
+  return typeof Notification !== 'undefined' && Notification.permission === 'granted';
+};
+
 export const useFCM = () => {
   const { user, isAuthenticated } = useAppSelector((state) => state.auth);
   const tokenRegisteredRef = useRef<boolean>(false);
+  const notificationsEnabledRef = useRef<boolean>(isNotificationsEnabled());
 
-  // Register FCM token when user is authenticated
+  // Listen for notification preference changes (from AccountMenu toggle)
   useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === NOTIFICATION_PREF_KEY) {
+        notificationsEnabledRef.current = e.newValue === 'true';
+        console.log('[FCM] Notification preference changed:', notificationsEnabledRef.current);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Register FCM token when user is authenticated AND notifications are enabled
+  useEffect(() => {
+    // Check notification preference
+    if (!isNotificationsEnabled()) {
+      console.log('[FCM] Notifications disabled by user preference, skipping token registration');
+      return;
+    }
+    
     if (isAuthenticated && user && !tokenRegisteredRef.current && !fcmInitialized) {
       fcmInitialized = true;
       tokenRegisteredRef.current = true;
@@ -139,23 +173,33 @@ export const useFCM = () => {
     const subscriptionTime = Date.now();
 
     onMessageListener((payload) => {
-      // Ignore messages that arrive too soon after subscription (likely buffered/cached)
-      const timeSinceSubscription = Date.now() - subscriptionTime;
-      if (timeSinceSubscription < INITIAL_LOAD_IGNORE_MS) {
-        console.log('[FCM] Ignoring buffered message during initial subscription period');
-        return;
-      }
-
-      // Generate a unique ID for this notification
-      // Include task_id for task reminders, messageId for emails
+      // Generate notification ID FIRST (before any checks)
       const notificationId = payload.data?.messageId || 
                             payload.data?.task_id ||
                             payload.data?.historyId || 
                             `${payload.notification?.title}-${payload.notification?.body}`;
       
-      // Try to claim the right to show this notification (cross-tab dedup)
+      // ALWAYS claim first - this ensures the message is marked as processed
+      // even if we ignore it due to buffering. This prevents duplicate 
+      // notifications on page reload.
       tryClaimNotification(notificationId).then((shouldShow) => {
         if (!shouldShow) {
+          console.log('[FCM] Notification already claimed by another tab or previous load');
+          return;
+        }
+
+        // Now check if this is a buffered message (arrived too soon after subscription)
+        // The message is already claimed, so future reloads won't show it again
+        const timeSinceSubscription = Date.now() - subscriptionTime;
+        if (timeSinceSubscription < INITIAL_LOAD_IGNORE_MS) {
+          console.log('[FCM] Ignoring buffered message (already claimed to prevent re-show on reload)');
+          return;
+        }
+
+        // Check if user has disabled notifications in settings
+        // Read directly from localStorage to catch same-tab changes
+        if (!isNotificationsEnabled()) {
+          console.log('[FCM] Notifications disabled by user, not showing toast');
           return;
         }
 

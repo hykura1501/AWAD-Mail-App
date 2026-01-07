@@ -86,6 +86,16 @@ export default function AccountMenu({
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
+    // Check localStorage for notification preference
+    const stored = localStorage.getItem('notifications_enabled');
+    if (stored !== null) {
+      return stored === 'true';
+    }
+    // Default: check if permission is already granted
+    return typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  });
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside
@@ -164,6 +174,56 @@ export default function AccountMenu({
                 {theme === "dark" ? "light_mode" : "dark_mode"}
               </span>
               <span>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</span>
+            </Button>
+
+            {/* Notification Toggle */}
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                if (!notificationsEnabled) {
+                  // Try to enable notifications
+                  if (typeof Notification === 'undefined') {
+                    alert('Trình duyệt không hỗ trợ thông báo');
+                    return;
+                  }
+                  if (Notification.permission === 'denied') {
+                    setShowNotificationModal(true);
+                    setIsMenuOpen(false);
+                    return;
+                  }
+                  if (Notification.permission === 'default') {
+                    const permission = await Notification.requestPermission();
+                    if (permission === 'granted') {
+                      setNotificationsEnabled(true);
+                      localStorage.setItem('notifications_enabled', 'true');
+                    } else {
+                      setShowNotificationModal(true);
+                      setIsMenuOpen(false);
+                      return;
+                    }
+                  } else {
+                    setNotificationsEnabled(true);
+                    localStorage.setItem('notifications_enabled', 'true');
+                  }
+                } else {
+                  // Disable notifications
+                  setNotificationsEnabled(false);
+                  localStorage.setItem('notifications_enabled', 'false');
+                }
+                setIsMenuOpen(false);
+              }}
+              className="w-full px-3 py-2 justify-between h-auto text-left text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center transition-colors text-sm rounded-none"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 text-lg [font-variation-settings:'wght'_300]">
+                  {notificationsEnabled ? 'notifications_active' : 'notifications_off'}
+                </span>
+                <span>Thông báo</span>
+              </div>
+              {/* Toggle Switch */}
+              <div className={`relative w-9 h-5 rounded-full transition-colors ${notificationsEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </div>
             </Button>
 
             {/* Tasks */}
@@ -253,6 +313,38 @@ export default function AccountMenu({
                 </kbd>
               </div>
             ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Notification Permission Modal */}
+      <Dialog open={showNotificationModal} onOpenChange={setShowNotificationModal}>
+        <DialogContent className="max-w-[320px] p-5">
+          <DialogHeader className="pb-3">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <span className="material-symbols-outlined text-xl text-orange-500">notifications_off</span>
+              Bật thông báo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Để nhận thông báo email mới, bạn cần cho phép thông báo trong cài đặt trình duyệt.
+            </p>
+            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3 text-sm">
+              <p className="font-medium text-gray-900 dark:text-white mb-2">Hướng dẫn:</p>
+              <ol className="list-decimal list-inside space-y-1 text-gray-600 dark:text-gray-400">
+                <li>Nhấn vào biểu tượng 🔒 trên thanh địa chỉ</li>
+                <li>Tìm mục "Thông báo" (Notifications)</li>
+                <li>Chọn "Cho phép" (Allow)</li>
+                <li>Tải lại trang</li>
+              </ol>
+            </div>
+            <Button
+              onClick={() => setShowNotificationModal(false)}
+              className="w-full"
+            >
+              Đã hiểu
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
