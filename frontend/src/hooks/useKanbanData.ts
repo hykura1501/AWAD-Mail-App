@@ -214,7 +214,27 @@ export function useKanbanData({
   useEffect(() => {
     const initKanban = async () => {
       try {
-        // 1. Fetch column config + mailboxes
+        // 1. IMMEDIATELY load from IndexedDB cache for instant display
+        console.log('[KanbanData] Loading from IndexedDB cache first...');
+        const cachedEmailIds: string[] = [];
+        
+        for (const colId of DEFAULT_COLUMN_IDS) {
+          const cachedEmails = await getKanbanColumnFromCache(colId);
+          if (cachedEmails && cachedEmails.length > 0) {
+            setKanbanEmails((prev) => ({ ...prev, [colId]: cachedEmails }));
+            setLoadingColumns((prev) => ({ ...prev, [colId]: false }));
+            cachedEmailIds.push(...cachedEmails.map((e: Email) => e.id));
+            console.log(`[KanbanData] Loaded ${cachedEmails.length} cached emails for "${colId}"`);
+          }
+        }
+        
+        // If we have cached data, trigger onInitComplete early for summaries
+        if (cachedEmailIds.length > 0) {
+          console.log(`[KanbanData] Triggering early onInitComplete with ${cachedEmailIds.length} cached emails`);
+          onInitComplete?.(cachedEmailIds);
+        }
+
+        // 2. Fetch column config + mailboxes from API
         const [columns, mbs] = await Promise.all([
           emailService.getKanbanColumns(),
           emailService.getAllMailboxes(),
@@ -222,14 +242,15 @@ export function useKanbanData({
         setKanbanColumnConfigs(columns);
         setMailboxes(mbs);
 
-        // 2. Determine all column IDs
+        // 3. Determine all column IDs (default + custom)
         const defaultIds = new Set(DEFAULT_COLUMN_IDS);
         const allColumnIds = [
           ...DEFAULT_COLUMN_IDS,
           ...columns.filter((c) => !defaultIds.has(c.column_id as typeof DEFAULT_COLUMN_IDS[number])).map((c) => c.column_id),
         ];
 
-        // 3. Load columns in batches and collect email IDs
+        // 4. Fetch fresh data from API (background refresh)
+        console.log('[KanbanData] Fetching fresh data from API...');
         const allLoadedEmailIds: string[] = [];
 
         for (let i = 0; i < allColumnIds.length; i += BATCH_SIZE) {
@@ -238,15 +259,21 @@ export function useKanbanData({
             batch.map(async (colId) => {
               const data = await emailService.getEmailsByStatus(colId, limit, 0);
               setKanbanEmails((prev) => ({ ...prev, [colId]: data.emails }));
-              setColumnLoading(colId, false);
+              setLoadingColumns((prev) => ({ ...prev, [colId]: false }));
+              // Save to cache for next time
+              saveKanbanColumnToCache(colId, data.emails);
               return data.emails.map((e) => e.id);
             })
           );
           results.forEach((ids) => allLoadedEmailIds.push(...ids));
         }
 
-        // 4. Callback with all loaded email IDs (for summary queueing)
-        onInitComplete?.(allLoadedEmailIds);
+        // 5. Callback with all freshly loaded email IDs (for summary queueing if not done earlier)
+        if (cachedEmailIds.length === 0) {
+          onInitComplete?.(allLoadedEmailIds);
+        }
+        
+        console.log(`[KanbanData] Init complete, loaded ${allLoadedEmailIds.length} emails from API`);
       } catch (error) {
         console.error("Error initializing Kanban:", error);
       }
