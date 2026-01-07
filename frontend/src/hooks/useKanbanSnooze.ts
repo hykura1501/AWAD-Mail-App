@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import type { Email } from "@/types/email";
 import { emailService } from "@/services/email.service";
+import { useQueryClient } from "@tanstack/react-query";
 
 export interface EmailToSnooze {
   id: string;
@@ -8,32 +8,28 @@ export interface EmailToSnooze {
 }
 
 export interface UseKanbanSnoozeOptions {
-  /** Callback to update kanban emails after snooze */
-  onSnoozeComplete: (emailId: string) => void;
 }
 
 export interface UseKanbanSnoozeReturn {
   // State
   snoozeDialogOpen: boolean;
   emailToSnooze: EmailToSnooze | null;
-  
+  snoozingEmailId: string | null;
+
   // Actions
   openSnoozeDialog: (email: { id: string; subject: string }) => void;
   closeSnoozeDialog: () => void;
-  confirmSnooze: (snoozeUntil: Date, updateEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>>) => void;
+  confirmSnooze: (snoozeUntil: Date) => void;
 }
 
 /**
  * Custom hook for Kanban snooze functionality
- * 
- * Handles:
- * - Snooze dialog state management
- * - Snooze confirmation with optimistic update
- * - API call for snoozing emails
  */
 export function useKanbanSnooze(): UseKanbanSnoozeReturn {
+  const queryClient = useQueryClient();
   const [snoozeDialogOpen, setSnoozeDialogOpen] = useState(false);
   const [emailToSnooze, setEmailToSnooze] = useState<EmailToSnooze | null>(null);
+  const [snoozingEmailId, setSnoozingEmailId] = useState<string | null>(null);
 
   const openSnoozeDialog = useCallback((email: { id: string; subject: string }) => {
     setEmailToSnooze({ id: email.id, subject: email.subject });
@@ -45,62 +41,39 @@ export function useKanbanSnooze(): UseKanbanSnoozeReturn {
     setEmailToSnooze(null);
   }, []);
 
-  const confirmSnooze = useCallback((
-    snoozeUntil: Date,
-    setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>>
-  ) => {
+  const confirmSnooze = useCallback((snoozeUntil: Date) => {
     if (!emailToSnooze) return;
 
     const emailId = emailToSnooze.id;
-
-    // Optimistic update
-    setKanbanEmails((prev) => {
-      let movedEmail: Email | undefined;
-      const newEmails: Record<string, Email[]> = {};
-
-      // Remove email from all columns
-      Object.entries(prev).forEach(([col, emails]) => {
-        if (!emails) {
-          newEmails[col] = [];
-          return;
-        }
-        const filtered = emails.filter((e) => {
-          if (e.id === emailId) {
-            movedEmail = e;
-            return false;
-          }
-          return true;
-        });
-        newEmails[col] = filtered;
-      });
-
-      // Add to snoozed column
-      if (movedEmail) {
-        if (!newEmails["snoozed"]) {
-          newEmails["snoozed"] = [];
-        }
-        newEmails["snoozed"] = [movedEmail, ...newEmails["snoozed"]];
-      }
-      return newEmails;
-    });
+    setSnoozingEmailId(emailId);
 
     // Call API
-    emailService.snoozeEmail(emailId, snoozeUntil).catch((error) => {
-      console.error("Error snoozing email:", error);
-    });
+    emailService.snoozeEmail(emailId, snoozeUntil)
+      .then(() => {
+        // Invalidate all emails to refresh board
+        return queryClient.invalidateQueries({ queryKey: ['emails'] });
+      })
+      .catch((error) => {
+        console.error("Error snoozing email:", error);
+      })
+      .finally(() => {
+        setSnoozingEmailId(null);
+      });
 
-    // Close dialog
+    // Close dialog immediately
     setSnoozeDialogOpen(false);
     setEmailToSnooze(null);
-  }, [emailToSnooze]);
+  }, [emailToSnooze, queryClient]);
 
   return {
     snoozeDialogOpen,
     emailToSnooze,
+    snoozingEmailId,
     openSnoozeDialog,
     closeSnoozeDialog,
     confirmSnooze,
   };
 }
+
 
 export default useKanbanSnooze;

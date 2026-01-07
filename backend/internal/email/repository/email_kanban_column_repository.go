@@ -19,17 +19,12 @@ func NewEmailKanbanColumnRepository(db *gorm.DB) EmailKanbanColumnRepository {
 
 // SetEmailColumn sets the column for an email (creates or updates)
 func (r *emailKanbanColumnRepository) SetEmailColumn(userID, emailID, columnID string) error {
-	var mapping emaildomain.EmailKanbanColumn
-	
-	// Try to find existing mapping
-	err := r.db.Where("user_id = ? AND email_id = ?", userID, emailID).First(&mapping).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	var count int64
+	r.db.Model(&emaildomain.EmailKanbanColumn{}).Where("user_id = ? AND email_id = ?", userID, emailID).Count(&count)
+
+	if count == 0 {
 		// Create new mapping
-		mapping = emaildomain.EmailKanbanColumn{
+		mapping := emaildomain.EmailKanbanColumn{
 			ID:       uuid.New().String(),
 			UserID:   userID,
 			EmailID:  emailID,
@@ -37,10 +32,11 @@ func (r *emailKanbanColumnRepository) SetEmailColumn(userID, emailID, columnID s
 		}
 		return r.db.Create(&mapping).Error
 	}
-	
-	// Update existing mapping
-	mapping.ColumnID = columnID
-	return r.db.Save(&mapping).Error
+
+	// Update existing mapping(s) - handle potential duplicates by updating all
+	return r.db.Model(&emaildomain.EmailKanbanColumn{}).
+		Where("user_id = ? AND email_id = ?", userID, emailID).
+		Update("column_id", columnID).Error
 }
 
 // GetEmailColumn gets the column ID for an email
@@ -83,17 +79,12 @@ func (r *emailKanbanColumnRepository) RemoveEmailColumnMapping(userID, emailID, 
 
 // SnoozeEmailToColumn moves email to snoozed column and saves previous column
 func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previousColumnID string) error {
-	var mapping emaildomain.EmailKanbanColumn
-	
-	// Try to find existing mapping
-	err := r.db.Where("user_id = ? AND email_id = ?", userID, emailID).First(&mapping).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	var count int64
+	r.db.Model(&emaildomain.EmailKanbanColumn{}).Where("user_id = ? AND email_id = ?", userID, emailID).Count(&count)
+
+	if count == 0 {
 		// Create new mapping
-		mapping = emaildomain.EmailKanbanColumn{
+		mapping := emaildomain.EmailKanbanColumn{
 			ID:               uuid.New().String(),
 			UserID:           userID,
 			EmailID:          emailID,
@@ -102,11 +93,14 @@ func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previ
 		}
 		return r.db.Create(&mapping).Error
 	}
-	
-	// Update existing mapping - save current column as previous, then set to snoozed
-	mapping.PreviousColumnID = previousColumnID
-	mapping.ColumnID = "snoozed"
-	return r.db.Save(&mapping).Error
+
+	// Update existing mapping(s) - handle potential duplicates by updating all
+	return r.db.Model(&emaildomain.EmailKanbanColumn{}).
+		Where("user_id = ? AND email_id = ?", userID, emailID).
+		Updates(map[string]interface{}{
+			"column_id":          "snoozed",
+			"previous_column_id": previousColumnID,
+		}).Error
 }
 
 // GetPreviousColumn gets the previous column ID for a snoozed email
