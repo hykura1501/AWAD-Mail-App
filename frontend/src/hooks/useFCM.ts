@@ -134,18 +134,10 @@ export const useFCM = () => {
     }
     messageListenerRegistered = true;
 
-    // Small delay (2s) to ignore buffered messages right after subscription
-    const INITIAL_LOAD_IGNORE_MS = 2000;
-    const subscriptionTime = Date.now();
+    // Key for storing the last received notification ID to prevent duplicates on reload
+    const LAST_NOTIFICATION_ID_KEY = 'fcm_last_notification_id';
 
     onMessageListener((payload) => {
-      // Ignore messages that arrive too soon after subscription (likely buffered/cached)
-      const timeSinceSubscription = Date.now() - subscriptionTime;
-      if (timeSinceSubscription < INITIAL_LOAD_IGNORE_MS) {
-        console.log('[FCM] Ignoring buffered message during initial subscription period');
-        return;
-      }
-
       // Generate a unique ID for this notification
       // Include task_id for task reminders, messageId for emails
       const notificationId = payload.data?.messageId || 
@@ -153,13 +145,25 @@ export const useFCM = () => {
                             payload.data?.historyId || 
                             `${payload.notification?.title}-${payload.notification?.body}`;
       
-      // Try to claim the right to show this notification (cross-tab dedup)
+      // 1. Check against the last shown notification ID (persistent across reloads)
+      // This prevents the "buffered" message on reload from showing again
+      const lastId = localStorage.getItem(LAST_NOTIFICATION_ID_KEY);
+      if (lastId === notificationId) {
+        console.log(`[FCM] Ignoring duplicate notification ID (match last shown): ${notificationId}`);
+        return;
+      }
+
+      // 2. Try to claim the right to show this notification (cross-tab dedup)
       tryClaimNotification(notificationId).then((shouldShow) => {
         if (!shouldShow) {
           return;
         }
 
         console.log('[FCM] Showing notification:', payload);
+        
+        // Save as last shown ID immediately
+        localStorage.setItem(LAST_NOTIFICATION_ID_KEY, notificationId);
+
         // Read from data payload (we now send data-only messages)
         // Fallback to notification field for backwards compatibility
         const title = payload.data?.title || payload.notification?.title || 'Thông báo';
