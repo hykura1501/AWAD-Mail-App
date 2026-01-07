@@ -19,4 +19,8 @@ type AuthUsecase interface {
 	ValidateToken(tokenString string) (*authdomain.User, error)
 	SetPassword(userID string, password string) error
 	SetEmailSyncCallback(callback EmailSyncCallback)
+	
+	// FCM Token Management
+	RegisterFCMToken(userID, token, deviceInfo string) error
+	UnregisterFCMToken(token string) error
 }

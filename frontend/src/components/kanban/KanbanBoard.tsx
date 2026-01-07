@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
-import {
-  DndContext,
-  DragOverlay,
-  useSensor,
-  useSensors,
-  PointerSensor,
+import React, { useState } from "react";
+import { 
+  DndContext, 
+  DragOverlay, 
+  useSensor, 
+  useSensors, 
+  PointerSensor, 
   type DragEndEvent,
   type DragStartEvent,
   useDraggable,
@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import type { Email } from "@/types/email";
 import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { getSenderName, getCleanPreview } from "@/utils";
 
 export type KanbanColumn = {
   id: string;
@@ -34,107 +35,127 @@ export type KanbanBoardProps = {
   emailSummaries?: Record<string, { summary: string; loading: boolean }>;
   onRequestSummary?: (emailId: string) => void;
   isLoading?: boolean;
+  highlightedEmailId?: string | null;
 };
 
-// Helper function to strip HTML tags and decode entities
-function stripHtml(html: string): string {
-  const tmp = document.createElement("DIV");
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || "";
-}
-
-// Helper to get clean preview text
-function getCleanPreview(email: Email): string {
-  const text = email.preview || email.body || "";
-  const cleaned = stripHtml(text);
-  return cleaned.slice(0, 100);
-}
-
-function DraggableEmailCard({
-  email,
-  renderCardActions,
+function DraggableEmailCard({ 
+  email, 
+  renderCardActions, 
   onClick,
   summary,
   summaryLoading,
   onRequestSummary,
   columnId,
-  isFocused
+  isHighlighted
 }: {
-  email: Email;
+  email: Email; 
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
   onClick?: (emailId: string) => void;
   summary?: string;
   summaryLoading?: boolean;
   onRequestSummary?: (emailId: string) => void;
   columnId?: string;
-  isFocused?: boolean;
+  isHighlighted?: boolean;
 }) {
-  const elementRef = useRef<HTMLDivElement>(null);
-  const { attributes, listeners, setNodeRef: dndSetNodeRef, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: email.id,
     data: { email, type: "email", columnId: email.mailbox_id }
   });
-
-  const setNodeRef = (node: HTMLDivElement | null) => {
-    dndSetNodeRef(node);
-    elementRef.current = node;
-  };
-
-  useEffect(() => {
-    if (isFocused && elementRef.current) {
-      elementRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [isFocused]);
 
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      data-email-id={email.id}
       className={`
         group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm transition-all duration-200
         bg-white dark:bg-[#1A1D21] border-gray-100 dark:border-gray-800
         hover:shadow-md hover:border-blue-200 dark:hover:border-blue-900/30
-        cursor-grab active:cursor-grabbing touch-none overflow-hidden
+        cursor-grab active:cursor-grabbing touch-none
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
-        ${isFocused ? "ring-2 ring-blue-500 border-blue-500 z-10" : ""}
+        ${!email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""}
+        ${isHighlighted ? "email-highlight ring-2 ring-blue-500" : ""}
       `}
       onClick={() => onClick?.(email.id)}
     >
-      {/* Unread Indicator */}
-      {!email.is_read && (
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
-      )}
       <div className="flex justify-between items-start gap-2">
-        <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate flex-1">
-          {email.from}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {/* Unread indicator dot */}
+          {!email.is_read && (
+            <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" title="Chưa đọc" />
+          )}
+          <div className={`text-xs truncate flex-1 ${
+            !email.is_read 
+              ? "font-bold text-gray-800 dark:text-gray-100" 
+              : "font-medium text-gray-500 dark:text-gray-400"
+          }`}>
+            {getSenderName(email)}
+          </div>
         </div>
         <div className="text-[10px] text-gray-400 font-medium whitespace-nowrap shrink-0">
           {new Date(email.received_at).toLocaleDateString()}
         </div>
       </div>
-
-      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
+      
+      <div className={`text-sm leading-tight ${
+        !email.is_read 
+          ? "font-semibold text-gray-900 dark:text-gray-100" 
+          : "font-medium text-gray-800 dark:text-gray-200"
+      }`}>
         {email.subject}
       </div>
-
+      
       <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-        {getCleanPreview(email)}
+        {getCleanPreview(email.preview || email.body)}
       </div>
 
-      {/* Summary Display (when loaded) */}
+      {/* Summary Display (when loaded) - with formatted action items */}
       {(summary || summaryLoading) && (
         <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-          <div className="flex items-start gap-2 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
-            <Sparkles className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" />
+          <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-blue-50/50 dark:bg-blue-900/10">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-blue-500 shrink-0" />
+              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">AI Summary</span>
+            </div>
             {summaryLoading ? (
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 <span className="text-[10px] text-gray-500 dark:text-gray-400">Đang phân tích...</span>
               </div>
             ) : (
-              <div className="text-[10px] text-gray-700 dark:text-gray-300 line-clamp-3 leading-relaxed">
-                {summary}
+              <div className="space-y-1">
+                {summary?.split('\n').map((line, idx) => {
+                  // Highlight action items with colored badges (compact version)
+                  if (line.includes('📌 Cần làm:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-orange-100 dark:bg-orange-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-orange-600 dark:text-orange-400 font-semibold">📌</span>
+                        <span className="text-orange-700 dark:text-orange-300 truncate">{line.replace('📌 Cần làm:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  if (line.includes('📅 Deadline:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-red-600 dark:text-red-400 font-semibold">📅</span>
+                        <span className="text-red-700 dark:text-red-300 truncate">{line.replace('📅 Deadline:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  if (line.includes('💡 Lưu ý:')) {
+                    return (
+                      <div key={idx} className="flex items-center gap-1 text-[10px] bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded">
+                        <span className="text-yellow-600 dark:text-yellow-500 font-semibold">💡</span>
+                        <span className="text-yellow-700 dark:text-yellow-300 truncate">{line.replace('💡 Lưu ý:', '').trim()}</span>
+                      </div>
+                    );
+                  }
+                  // Regular summary text
+                  return line.trim() ? (
+                    <p key={idx} className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2">{line}</p>
+                  ) : null;
+                })}
               </div>
             )}
           </div>
@@ -156,7 +177,7 @@ function DraggableEmailCard({
             <span className="text-[10px]">Summary</span>
           </button>
         )}
-
+        
         {/* Other Action Buttons (Snooze/Unsnooze) */}
         <div className="flex gap-2">
           {renderCardActions?.(email, columnId)}
@@ -166,27 +187,50 @@ function DraggableEmailCard({
   );
 }
 
-function DroppableColumn({
-  column,
+// Skeleton card for loading state
+function SkeletonCard() {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border p-4 bg-white dark:bg-[#1A1D21] border-gray-100 dark:border-gray-800">
+      <div className="flex justify-between items-start gap-2">
+        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-24" />
+        <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-12" />
+      </div>
+      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
+      <div className="space-y-1">
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded animate-pulse w-full" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded animate-pulse w-2/3" />
+      </div>
+      <div className="mt-2 pt-2 border-t border-gray-50 dark:border-gray-800/50 flex gap-2">
+        <div className="h-6 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse flex-1" />
+        <div className="h-6 bg-gray-100 dark:bg-gray-800 rounded-lg animate-pulse w-16" />
+      </div>
+    </div>
+  );
+}
+
+function DroppableColumn({ 
+  column, 
   children,
-  onPageChange
-}: {
-  column: KanbanColumn;
+  onPageChange,
+  isLoading = false
+}: { 
+  column: KanbanColumn; 
   children: React.ReactNode;
   onPageChange?: (colId: string, dir: 1 | -1) => void;
+  isLoading?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: column.id,
     data: { column, type: "column" }
   });
 
-  const currentPage = (column.offset !== undefined && column.limit)
-    ? Math.floor(column.offset / column.limit) + 1
+  const currentPage = (column.offset !== undefined && column.limit) 
+    ? Math.floor(column.offset / column.limit) + 1 
     : 1;
 
   // Determine column color accent based on ID
   const getAccentColor = (id: string) => {
-    switch (id) {
+    switch(id) {
       case 'inbox': return 'bg-blue-500';
       case 'todo': return 'bg-purple-500';
       case 'done': return 'bg-green-500';
@@ -240,99 +284,37 @@ function DroppableColumn({
       </div>
 
       {/* Cards Container */}
-      <div className="flex-1 overflow-y-auto px-3 pb-3 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto px-3 pb-3 custom-scrollbar scrollbar-thin">
         <div className="flex flex-col gap-3 min-h-[150px]">
-          {children}
+          {isLoading && column.emails.length === 0 ? (
+            // Show skeleton cards when loading
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : (
+            children
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export default function KanbanBoard({
-  columns,
-  onEmailDrop,
-  renderCardActions,
-  onPageChange,
+export default function KanbanBoard({ 
+  columns, 
+  onEmailDrop, 
+  renderCardActions, 
+  onPageChange, 
   onEmailClick,
   emailSummaries = {},
   onRequestSummary,
-  isLoading = false
+  isLoading = false,
+  highlightedEmailId
 }: KanbanBoardProps) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
-  const [focusedEmailId, setFocusedEmailId] = useState<string | null>(null);
-
-  // Keyboard navigation logic
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if input/textarea is focused
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
-
-      if (!columns.length) return;
-
-      const findCurrentPosition = () => {
-        if (!focusedEmailId) return { colIndex: -1, emailIndex: -1 };
-        for (let c = 0; c < columns.length; c++) {
-          const eIdx = columns[c].emails.findIndex(email => email.id === focusedEmailId);
-          if (eIdx !== -1) return { colIndex: c, emailIndex: eIdx };
-        }
-        return { colIndex: -1, emailIndex: -1 };
-      };
-
-      const { colIndex, emailIndex } = findCurrentPosition();
-
-      // Helper to focus
-      const focus = (cIdx: number, eIdx: number) => {
-        if (columns[cIdx] && columns[cIdx].emails[eIdx]) {
-          setFocusedEmailId(columns[cIdx].emails[eIdx].id);
-          e.preventDefault();
-        }
-      };
-
-      switch (e.key) {
-        case 'ArrowDown':
-          if (colIndex === -1) focus(0, 0);
-          else if (emailIndex < columns[colIndex].emails.length - 1) focus(colIndex, emailIndex + 1);
-          break;
-        case 'ArrowUp':
-          if (colIndex === -1) focus(0, 0);
-          else if (emailIndex > 0) focus(colIndex, emailIndex - 1);
-          break;
-        case 'ArrowRight':
-          if (colIndex === -1) focus(0, 0);
-          else if (colIndex < columns.length - 1) {
-            // Try to maintain relative vertical position or go to last
-            const targetCol = columns[colIndex + 1];
-            const targetIdx = Math.min(emailIndex, targetCol.emails.length - 1);
-            if (targetCol.emails.length > 0) focus(colIndex + 1, Math.max(0, targetIdx));
-            else focus(colIndex + 1, -1); // Does not focus if empty? Logic above requires existing email
-          }
-          break;
-        case 'ArrowLeft':
-          if (colIndex === -1) focus(0, 0);
-          else if (colIndex > 0) {
-            const targetCol = columns[colIndex - 1];
-            const targetIdx = Math.min(emailIndex, targetCol.emails.length - 1);
-            if (targetCol.emails.length > 0) focus(colIndex - 1, Math.max(0, targetIdx));
-          }
-          break;
-        case 'Enter':
-          if (focusedEmailId && onEmailClick) {
-            onEmailClick(focusedEmailId);
-            e.preventDefault();
-          }
-          break;
-        case 'Escape':
-          setFocusedEmailId(null);
-          e.preventDefault();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [columns, focusedEmailId, onEmailClick]);
-
+  
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -357,7 +339,7 @@ export default function KanbanBoard({
     let targetColumnId = over.id as string;
 
     const overType = over.data.current?.type;
-
+    
     if (overType === "email") {
       for (const col of columns) {
         if (col.emails.some(e => e.id === targetColumnId)) {
@@ -368,33 +350,25 @@ export default function KanbanBoard({
     }
 
     const isValidColumn = columns.some(c => c.id === targetColumnId);
-
+    
     if (isValidColumn && activeEmail) {
-      onEmailDrop(activeId, targetColumnId);
+        onEmailDrop(activeId, targetColumnId);
     }
   };
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={handleDragStart}
+    <DndContext 
+      sensors={sensors} 
+      onDragStart={handleDragStart} 
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-3 w-full h-full p-3 bg-white dark:bg-[#111418] relative">
-        {/* Global Loading Overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 bg-white/80 dark:bg-[#111418]/80 backdrop-blur-sm z-50 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <span className="text-base font-medium text-gray-700 dark:text-gray-300">Đang tải dữ liệu...</span>
-            </div>
-          </div>
-        )}
         {columns.map((col) => (
-          <DroppableColumn
-            key={col.id}
-            column={col}
+          <DroppableColumn 
+            key={col.id} 
+            column={col} 
             onPageChange={onPageChange}
+            isLoading={isLoading}
           >
             {col.emails.map((email) => (
               <DraggableEmailCard
@@ -406,13 +380,13 @@ export default function KanbanBoard({
                 summaryLoading={emailSummaries[email.id]?.loading}
                 onRequestSummary={onRequestSummary}
                 columnId={col.id}
-                isFocused={focusedEmailId === email.id}
+                isHighlighted={highlightedEmailId === email.id}
               />
             ))}
           </DroppableColumn>
         ))}
       </div>
-
+      
       {createPortal(
         <DragOverlay dropAnimation={{
           duration: 250,
@@ -422,22 +396,17 @@ export default function KanbanBoard({
             <div className="
               w-[320px] bg-white dark:bg-[#1A1D21] rounded-xl shadow-2xl p-4 
               border-2 border-blue-500 cursor-grabbing rotate-3 scale-105 z-50
-              relative overflow-hidden
             ">
-              {/* Unread Indicator */}
-              {!activeEmail.is_read && (
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
-              )}
               <div className="flex justify-between items-start gap-2 mb-2">
                 <div className="font-semibold text-sm text-gray-900 dark:text-gray-100 truncate">
-                  {activeEmail.from}
+                  {getSenderName(activeEmail)}
                 </div>
               </div>
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">
                 {activeEmail.subject}
               </div>
               <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">
-                {getCleanPreview(activeEmail)}
+                {getCleanPreview(activeEmail.preview || activeEmail.body)}
               </div>
             </div>
           ) : null}

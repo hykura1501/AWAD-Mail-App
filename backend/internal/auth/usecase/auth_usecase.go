@@ -26,14 +26,16 @@ import (
 // authUsecase implements AuthUsecase interface
 type authUsecase struct {
 	userRepo          repository.UserRepository
+	fcmRepo           repository.FCMTokenRepository
 	config            *config.Config
 	emailSyncCallback EmailSyncCallback // Optional callback to sync emails after auth
 }
 
 // NewAuthUsecase creates a new instance of authUsecase
-func NewAuthUsecase(userRepo repository.UserRepository, cfg *config.Config) AuthUsecase {
+func NewAuthUsecase(userRepo repository.UserRepository, fcmRepo repository.FCMTokenRepository, cfg *config.Config) AuthUsecase {
 	return &authUsecase{
 		userRepo: userRepo,
+		fcmRepo:  fcmRepo,
 		config:   cfg,
 	}
 }
@@ -356,12 +358,19 @@ func (u *authUsecase) RefreshToken(refreshToken string) (*authdto.TokenResponse,
 	shouldRotateRefreshToken := storedToken.ExpiresAt.Sub(time.Now()) < 24*time.Hour
 
 	if shouldRotateRefreshToken {
-		// Generate new refresh token and replace old one
+		// Generate new refresh token
 		newRefreshToken, err := u.generateRefreshToken(user)
 		if err != nil {
 			return nil, err
 		}
 
+		// Delete the OLD token for this device (not all tokens)
+		if err := u.userRepo.DeleteRefreshToken(refreshToken); err != nil {
+			// Log but don't fail - token might already be gone
+			fmt.Printf("Warning: failed to delete old refresh token: %v\n", err)
+		}
+
+		// Add the new token
 		refreshTokenEntity := &authdomain.RefreshToken{
 			Token:     newRefreshToken,
 			UserID:    user.ID,
@@ -500,4 +509,12 @@ func (u *authUsecase) ValidateToken(tokenString string) (*authdomain.User, error
 	}
 
 	return user, nil
+}
+
+func (u *authUsecase) RegisterFCMToken(userID, token, deviceInfo string) error {
+	return u.fcmRepo.SaveToken(userID, token, deviceInfo)
+}
+
+func (u *authUsecase) UnregisterFCMToken(token string) error {
+	return u.fcmRepo.DeleteToken(token)
 }

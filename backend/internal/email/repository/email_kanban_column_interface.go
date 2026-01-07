@@ -5,6 +5,12 @@ type EmailKanbanColumnRepository interface {
 	// SetEmailColumn sets the column for an email (creates or updates)
 	SetEmailColumn(userID, emailID, columnID string) error
 	
+	// SnoozeEmailToColumn moves email to snoozed column and saves previous column
+	SnoozeEmailToColumn(userID, emailID, previousColumnID string) error
+	
+	// GetPreviousColumn gets the previous column ID for a snoozed email
+	GetPreviousColumn(userID, emailID string) (string, error)
+	
 	// GetEmailColumn gets the column ID for an email
 	GetEmailColumn(userID, emailID string) (string, error)
 	
@@ -16,4 +22,14 @@ type EmailKanbanColumnRepository interface {
 	
 	// RemoveEmailColumnMapping removes a specific email-column mapping
 	RemoveEmailColumnMapping(userID, emailID, columnID string) error
+	
+	// GetAllSnoozedMappings gets all email mappings in snoozed column (for auto-unsnooze)
+	GetAllSnoozedMappings() ([]SnoozedEmailMapping, error)
+}
+
+// SnoozedEmailMapping contains info needed for auto-unsnooze
+type SnoozedEmailMapping struct {
+	UserID           string
+	EmailID          string
+	PreviousColumnID string
 }

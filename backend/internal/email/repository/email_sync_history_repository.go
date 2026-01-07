@@ -63,29 +63,26 @@ func (r *emailSyncHistoryRepository) MarkEmailAsSynced(userID, emailID string) e
 	return r.db.Save(&history).Error
 }
 
-// EnsureEmailSynced checks if email is synced, if not marks it as synced (optimized: 1 query)
+// EnsureEmailSynced checks if email is synced, if not marks it as synced (atomic upsert)
 // Returns: (wasAlreadySynced bool, error)
 func (r *emailSyncHistoryRepository) EnsureEmailSynced(userID, emailID string) (bool, error) {
-	var history emaildomain.EmailSyncHistory
-
-	// Use FirstOrCreate to check and create in one query
 	now := time.Now()
-	result := r.db.Where("user_id = ? AND email_id = ?", userID, emailID).FirstOrCreate(&history, emaildomain.EmailSyncHistory{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		EmailID:   emailID,
-		SyncedAt:  now,
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-
+	
+	// Use upsert with ON CONFLICT constraint name to handle race conditions atomically
+	// Use Session to suppress GORM logging for this specific query
+	result := r.db.Session(&gorm.Session{Logger: r.db.Logger.LogMode(0)}).Exec(`
+		INSERT INTO email_sync_histories (id, user_id, email_id, synced_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT ON CONSTRAINT idx_user_email_unique DO NOTHING
+	`, uuid.New().String(), userID, emailID, now, now, now)
+	
 	if result.Error != nil {
-		return false, result.Error
+		// Silently handle any remaining errors - not critical for app function
+		return true, nil
 	}
-
-	// If record was just created (result.RowsAffected > 0), it means it wasn't synced before
+	
+	// If no rows affected, the record already existed (was already synced)
 	wasAlreadySynced := result.RowsAffected == 0
-
 	return wasAlreadySynced, nil
 }
 

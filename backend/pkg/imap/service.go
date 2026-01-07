@@ -743,3 +743,49 @@ func (s *IMAPService) TrashEmail(ctx context.Context, server string, port int, e
 func (s *IMAPService) ArchiveEmail(ctx context.Context, server string, port int, emailAddr, password, messageID string) error {
 	return s.moveEmail(ctx, server, port, emailAddr, password, messageID, "archive")
 }
+
+// PermanentDeleteEmail permanently deletes an email by marking as deleted and expunging
+func (s *IMAPService) PermanentDeleteEmail(ctx context.Context, server string, port int, emailAddr, password, messageID string) error {
+	// Decode ID
+	decodedBytes, err := base64.URLEncoding.DecodeString(messageID)
+	if err != nil {
+		return fmt.Errorf("invalid email ID format")
+	}
+	decoded := string(decodedBytes)
+	parts := strings.Split(decoded, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid email ID format")
+	}
+	mailboxName := parts[0]
+	uidStr := parts[1]
+	
+	var uid uint32
+	_, err = fmt.Sscanf(uidStr, "%d", &uid)
+	if err != nil {
+		return fmt.Errorf("invalid UID format")
+	}
+
+	c, err := s.connect(server, port, emailAddr, password)
+	if err != nil {
+		return err
+	}
+	defer c.Logout()
+
+	_, err = c.Select(mailboxName, false)
+	if err != nil {
+		return err
+	}
+
+	seqset := new(imap.SeqSet)
+	seqset.AddNum(uid)
+
+	// Mark as deleted
+	item := imap.FormatFlagsOp(imap.AddFlags, true)
+	err = c.UidStore(seqset, item, []interface{}{imap.DeletedFlag}, nil)
+	if err != nil {
+		return err
+	}
+
+	// Expunge to permanently delete
+	return c.Expunge(nil)
+}

@@ -20,8 +20,12 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install ca-certificates for HTTPS requests
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+# Set timezone to Vietnam (UTC+7)
+ENV TZ=Asia/Ho_Chi_Minh
+
+# Install ca-certificates for HTTPS requests and timezone data
+RUN apt-get update && apt-get install -y ca-certificates tzdata && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Copy the binary from builder
 COPY --from=builder /app/main .

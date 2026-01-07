@@ -31,6 +31,7 @@ export interface Email {
   attachments?: Attachment[];
   received_at: string;
   created_at: string;
+  snoozed_until?: string; // ISO date string, when snooze expires
 }
 
 export interface EmailsResponse {

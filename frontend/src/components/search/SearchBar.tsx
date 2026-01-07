@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emailService } from "@/services/email.service";
 import { useDebounce } from "@/hooks/useDebounce";
 import { getLocalSuggestions } from "@/lib/db";
 
+export type SearchMode = "semantic" | "fuzzy";
+
 interface SearchBarProps {
-  onSearch: (query: string) => void;
+  onSearch: (query: string, mode: SearchMode) => void;
   onClear: () => void;
   isSearching?: boolean;
   placeholder?: string;
@@ -14,6 +16,8 @@ interface SearchBarProps {
   value?: string; // Controlled value - if provided, displays this value
   onChange?: (value: string) => void; // Optional onChange callback for controlled mode
   disableSuggestions?: boolean; // If true, don't fetch or show suggestions (e.g., when already on search page)
+  searchMode?: SearchMode; // Controlled search mode
+  onSearchModeChange?: (mode: SearchMode) => void; // Callback when mode changes
 }
 
 export default function SearchBar({
@@ -25,14 +29,22 @@ export default function SearchBar({
   value: controlledValue,
   onChange,
   disableSuggestions = false,
+  searchMode: controlledSearchMode,
+  onSearchModeChange,
 }: SearchBarProps) {
   const [internalQuery, setInternalQuery] = useState(controlledValue || "");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [suggestionSelected, setSuggestionSelected] = useState(false); // Track if a suggestion was clicked
+  const [suggestionSelected, setSuggestionSelected] = useState(false);
+  const [internalSearchMode, setInternalSearchMode] = useState<SearchMode>("semantic");
+  const [showModeDropdown, setShowModeDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const modeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Use controlled mode if provided, otherwise use internal state
+  const searchMode = controlledSearchMode !== undefined ? controlledSearchMode : internalSearchMode;
 
   // Sync internal state when controlled value changes from outside (not from user input)
   useEffect(() => {
@@ -124,7 +136,7 @@ export default function SearchBar({
     };
   }, [debouncedQuery, suggestionSelected, disableSuggestions]);
 
-  // Close suggestions when clicking outside
+  // Close suggestions and mode dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -135,17 +147,35 @@ export default function SearchBar({
       ) {
         setShowSuggestions(false);
       }
+      // Close mode dropdown if clicking outside
+      if (
+        modeDropdownRef.current &&
+        !modeDropdownRef.current.contains(event.target as Node)
+      ) {
+        setShowModeDropdown(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const handleModeChange = (newMode: SearchMode) => {
+    if (controlledSearchMode === undefined) {
+      setInternalSearchMode(newMode);
+    }
+    if (onSearchModeChange) {
+      onSearchModeChange(newMode);
+    }
+    setShowModeDropdown(false);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
       setShowSuggestions(false);
-      onSearch(query.trim());
+      setShowModeDropdown(false);
+      onSearch(query.trim(), searchMode);
     }
   };
 
@@ -183,7 +213,7 @@ export default function SearchBar({
       onChange(suggestion);
     }
     // Trigger search (will navigate to search page if not already there)
-    onSearch(suggestion);
+    onSearch(suggestion, searchMode);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -287,44 +317,112 @@ export default function SearchBar({
     return <>{parts}</>;
   };
 
+  const modeConfig = {
+    semantic: { label: "AI Semantic", icon: "✨", description: "Tìm kiếm theo ngữ nghĩa" },
+    fuzzy: { label: "Exact Match", icon: "🔤", description: "Tìm kiếm chính xác" },
+  };
+
   return (
     <div className={cn("relative flex-1 max-w-md", className)}>
-      <form onSubmit={handleSubmit} className="relative flex items-center">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onFocus={() => {
-            if (suggestions.length > 0) {
-              setShowSuggestions(true);
-            }
-          }}
-          placeholder={placeholder}
-          disabled={isSearching}
-          className={cn(
-            "w-full pl-10 pr-10 py-2 rounded-full",
-            "bg-gray-100 dark:bg-gray-800",
-            "border border-transparent",
-            "focus:border-blue-500 focus:bg-white dark:focus:bg-gray-900",
-            "text-sm text-gray-900 dark:text-white",
-            "placeholder:text-gray-500 dark:placeholder:text-gray-400",
-            "transition-all duration-200",
-            "focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+      <div className="flex items-center gap-1">
+        {/* Search Input */}
+        <form onSubmit={handleSubmit} className="relative flex-1 flex items-center">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onFocus={() => {
+              if (suggestions.length > 0) {
+                setShowSuggestions(true);
+              }
+            }}
+            placeholder={placeholder}
+            disabled={isSearching}
+            className={cn(
+              "w-full pl-10 pr-10 py-2 rounded-l-full",
+              "bg-gray-100 dark:bg-gray-800",
+              "border border-transparent border-r-0",
+              "focus:border-blue-500 focus:bg-white dark:focus:bg-gray-900",
+              "text-sm text-gray-900 dark:text-white",
+              "placeholder:text-gray-500 dark:placeholder:text-gray-400",
+              "transition-all duration-200",
+              "focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            )}
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 z-10"
+            >
+              <X className="h-4 w-4 text-gray-500" />
+            </button>
           )}
-        />
-        {query && (
+        </form>
+
+        {/* Search Mode Dropdown */}
+        <div className="relative" ref={modeDropdownRef}>
           <button
             type="button"
-            onClick={handleClear}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 z-10"
+            onClick={() => setShowModeDropdown(!showModeDropdown)}
+            className={cn(
+              "flex items-center gap-1 px-3 py-2 rounded-r-full",
+              "bg-gray-100 dark:bg-gray-800",
+              "border border-transparent border-l-0",
+              "hover:bg-gray-200 dark:hover:bg-gray-700",
+              "text-xs font-medium text-gray-600 dark:text-gray-300",
+              "transition-all duration-200",
+              "whitespace-nowrap"
+            )}
           >
-            <X className="h-4 w-4 text-gray-500" />
+            <span>{modeConfig[searchMode].icon}</span>
+            <span className="hidden sm:inline">{modeConfig[searchMode].label}</span>
+            <ChevronDown className={cn(
+              "h-3 w-3 transition-transform duration-200",
+              showModeDropdown && "rotate-180"
+            )} />
           </button>
-        )}
-      </form>
+
+          {/* Mode Dropdown Menu */}
+          {showModeDropdown && (
+            <div className={cn(
+              "absolute top-full right-0 mt-1 z-50",
+              "bg-white dark:bg-gray-800",
+              "border border-gray-200 dark:border-gray-700",
+              "rounded-lg shadow-lg",
+              "min-w-[180px] py-1"
+            )}>
+              {(["semantic", "fuzzy"] as SearchMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleModeChange(mode)}
+                  className={cn(
+                    "w-full text-left px-3 py-2 text-sm",
+                    "hover:bg-gray-100 dark:hover:bg-gray-700",
+                    "transition-colors flex items-center gap-2",
+                    searchMode === mode && "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                  )}
+                >
+                  <span>{modeConfig[mode].icon}</span>
+                  <div>
+                    <div className="font-medium">{modeConfig[mode].label}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {modeConfig[mode].description}
+                    </div>
+                  </div>
+                  {searchMode === mode && (
+                    <span className="ml-auto text-blue-600 dark:text-blue-400">✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Suggestions Dropdown */}
       {showSuggestions && suggestions.length > 0 && (

@@ -19,6 +19,17 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // New Kanban-specific variants
+        snooze:
+          "bg-yellow-400 text-black hover:bg-yellow-500 active:bg-yellow-600 dark:bg-yellow-500 dark:hover:bg-yellow-600",
+        unsnooze:
+          "bg-green-400 text-black hover:bg-green-500 active:bg-green-600 dark:bg-green-500 dark:hover:bg-green-600",
+        move:
+          "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50",
+        kanban:
+          "bg-gradient-to-r from-blue-400 to-blue-500 dark:from-blue-600 dark:to-blue-700 text-white hover:from-blue-500 hover:to-blue-600 dark:hover:from-blue-700 dark:hover:to-blue-800 shadow-sm hover:shadow-md",
+        warning:
+          "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/50",
       },
       size: {
         default: "h-8 px-3 py-1.5 has-[>svg]:px-2.5 text-xs",
@@ -27,6 +38,8 @@ const buttonVariants = cva(
         icon: "size-8",
         "icon-sm": "size-7",
         "icon-lg": "size-9",
+        // New action button size
+        action: "h-7 px-3 py-1.5 text-xs rounded-lg",
       },
     },
     defaultVariants: {

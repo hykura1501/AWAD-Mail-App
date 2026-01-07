@@ -2,7 +2,9 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
@@ -247,6 +249,30 @@ func (h *EmailHandler) SnoozeEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "email snoozed", "snooze_until": snoozeTime})
 }
 
+// POST /emails/:id/unsnooze
+func (h *EmailHandler) UnsnoozeEmail(c *gin.Context) {
+	id := c.Param("id")
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+	userID := userData.ID
+
+	targetColumn, err := h.emailUsecase.UnsnoozeEmail(userID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "email unsnoozed", "target_column": targetColumn})
+}
+
 func NewEmailHandler(emailUsecase usecase.EmailUsecase) *EmailHandler {
 	return &EmailHandler{
 		emailUsecase: emailUsecase,
@@ -457,6 +483,9 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 		return
 	}
 
+	log.Printf("Handler Received - Subject: %s", req.Subject)
+	log.Printf("Handler Received - Body len: %d", len(req.Body))
+
 	user, exists := c.Get("user")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
@@ -471,7 +500,32 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 
 	userID := userData.ID
 
-	if err := h.emailUsecase.SendEmail(userID, req.To, req.Cc, req.Bcc, req.Subject, req.Body, req.Files); err != nil {
+	// Parse inline images metadata
+	var inlineImagesMeta []emaildto.InlineImageMeta
+	if req.InlineImagesMeta != "" {
+		if err := json.Unmarshal([]byte(req.InlineImagesMeta), &inlineImagesMeta); err != nil {
+			log.Printf("Failed to parse inline_images_meta: %v", err)
+		}
+	}
+
+	// Map Content-ID to files
+	inlineFilesWithCID := make(map[string]*multipart.FileHeader)
+	for _, meta := range inlineImagesMeta {
+		// Find matching file by filename
+		for _, file := range req.InlineImages {
+			if file.Filename == meta.Filename {
+				// Set Content-ID in file header for use by gmail service
+				file.Header.Set("Content-ID", meta.ContentID)
+				inlineFilesWithCID[meta.ContentID] = file
+				break
+			}
+		}
+	}
+
+	// Combine files: regular attachments + inline images (with Content-ID set)
+	allFiles := append(req.Files, req.InlineImages...)
+
+	if err := h.emailUsecase.SendEmail(userID, req.To, req.Cc, req.Bcc, req.Subject, req.Body, allFiles); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -763,4 +817,117 @@ func (h *EmailHandler) GetSearchSuggestions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
+}
+
+// POST /api/emails/bulk
+// BulkOperation handles bulk operations on multiple emails
+func (h *EmailHandler) BulkOperation(c *gin.Context) {
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	userID := userData.ID
+
+	var req emaildto.BulkOperationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(req.EmailIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email_ids cannot be empty"})
+		return
+	}
+
+	var successCount, failCount int
+	var lastError error
+
+	switch req.Action {
+	case "mark_read":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.MarkEmailAsRead(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "mark_unread":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.MarkEmailAsUnread(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "trash":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.TrashEmail(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	case "permanent_delete":
+		for _, emailID := range req.EmailIDs {
+			if err := h.emailUsecase.PermanentDeleteEmail(userID, emailID); err != nil {
+				failCount++
+				lastError = err
+			} else {
+				successCount++
+			}
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid action. Valid actions: mark_read, mark_unread, trash, permanent_delete"})
+		return
+	}
+
+	response := gin.H{
+		"success_count": successCount,
+		"fail_count":    failCount,
+		"total":         len(req.EmailIDs),
+	}
+
+	if lastError != nil && failCount > 0 {
+		response["last_error"] = lastError.Error()
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// DELETE /api/emails/:id/permanent
+// PermanentDeleteEmail permanently deletes an email (only works for emails in trash)
+func (h *EmailHandler) PermanentDeleteEmail(c *gin.Context) {
+	id := c.Param("id")
+
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+
+	userData, ok := user.(*authdomain.User)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user data"})
+		return
+	}
+
+	userID := userData.ID
+
+	if err := h.emailUsecase.PermanentDeleteEmail(userID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email permanently deleted"})
 }

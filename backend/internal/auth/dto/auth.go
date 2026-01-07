@@ -40,3 +40,7 @@ type TokenResponse struct {
 	NeedsPasswordSet bool                `json:"needs_password_set"`
 }
 
+type RegisterFCMRequest struct {
+	Token      string `json:"token" binding:"required"`
+	DeviceInfo string `json:"device_info"`
+}

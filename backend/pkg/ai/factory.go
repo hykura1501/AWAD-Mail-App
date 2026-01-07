@@ -1,0 +1,123 @@
+package ai
+
+import (
+	"context"
+	"fmt"
+
+	"ga03-backend/pkg/gemini"
+)
+
+// Config holds AI provider configuration
+type Config struct {
+	Provider   ProviderType // "gemini" or "ollama"
+	
+	// Gemini config
+	GeminiAPIKey string
+	
+	// Ollama config
+	OllamaBaseURL string // e.g., "http://localhost:11434"
+	OllamaModel   string // e.g., "llama3", "mistral"
+}
+
+// GeminiAdapter wraps gemini.GeminiService to implement SummarizerService
+type GeminiAdapter struct {
+	service *gemini.GeminiService
+}
+
+func (g *GeminiAdapter) SummarizeEmail(ctx context.Context, emailText string) (string, error) {
+	return g.service.SummarizeEmail(ctx, emailText)
+}
+
+func (g *GeminiAdapter) ExtractTasksFromEmail(ctx context.Context, emailText string) ([]TaskExtraction, error) {
+	geminiTasks, err := g.service.ExtractTasksFromEmail(ctx, emailText)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert gemini.TaskExtraction to ai.TaskExtraction
+	tasks := make([]TaskExtraction, len(geminiTasks))
+	for i, gt := range geminiTasks {
+		tasks[i] = TaskExtraction{
+			Title:       gt.Title,
+			Description: gt.Description,
+			DueDate:     gt.DueDate,
+			Priority:    gt.Priority,
+		}
+	}
+	return tasks, nil
+}
+
+// NewSummarizerService creates a SummarizerService based on the config
+// This is the factory function - switch AI provider by changing config.Provider
+func NewSummarizerService(cfg Config) (SummarizerService, error) {
+	switch cfg.Provider {
+	case ProviderGemini:
+		if cfg.GeminiAPIKey == "" {
+			return nil, fmt.Errorf("GEMINI_API_KEY is required for Gemini provider")
+		}
+		return &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}, nil
+		
+	case ProviderOllama:
+		return NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel), nil
+		
+	case ProviderAuto:
+		var geminiSvc SummarizerService
+		if cfg.GeminiAPIKey != "" {
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
+		}
+		ollamaSvc := NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
+		
+	default:
+		// Default to Auto/Fallback mode
+		var geminiSvc SummarizerService
+		if cfg.GeminiAPIKey != "" {
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
+		}
+		ollamaSvc := NewOllamaService(cfg.OllamaBaseURL, cfg.OllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
+	}
+}
+
+// DynamicConfig holds AI provider configuration with dynamic getters for runtime updates
+type DynamicConfig struct {
+	Provider   ProviderType
+	GeminiAPIKey string
+	// Dynamic getters for Ollama config - allows runtime updates
+	GetOllamaBaseURL func() string
+	GetOllamaModel   func() string
+}
+
+// NewSummarizerServiceWithDynamicConfig creates a SummarizerService with dynamic config getters
+// Use this when you need runtime-updateable Ollama settings
+func NewSummarizerServiceWithDynamicConfig(cfg DynamicConfig) (SummarizerService, error) {
+	switch cfg.Provider {
+	case ProviderGemini:
+		if cfg.GeminiAPIKey == "" {
+			return nil, fmt.Errorf("GEMINI_API_KEY is required for Gemini provider")
+		}
+		return &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}, nil
+		
+	case ProviderOllama:
+		return NewOllamaServiceWithGetters(cfg.GetOllamaBaseURL, cfg.GetOllamaModel), nil
+		
+	case ProviderAuto:
+		var geminiSvc SummarizerService
+		if cfg.GeminiAPIKey != "" {
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
+		}
+		ollamaSvc := NewOllamaServiceWithGetters(cfg.GetOllamaBaseURL, cfg.GetOllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
+		
+	default:
+		// Default to Auto/Fallback mode
+		var geminiSvc SummarizerService
+		if cfg.GeminiAPIKey != "" {
+			geminiSvc = &GeminiAdapter{service: gemini.NewGeminiService(cfg.GeminiAPIKey)}
+		}
+		ollamaSvc := NewOllamaServiceWithGetters(cfg.GetOllamaBaseURL, cfg.GetOllamaModel)
+		return NewFallbackService(geminiSvc, ollamaSvc), nil
+	}
+}
+
+

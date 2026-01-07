@@ -40,9 +40,15 @@ type emailUsecase struct {
 		SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	}
 	kanbanStatus        map[string]string // emailID -> status
+	kanbanStatusMu      sync.RWMutex      // Mutex to protect kanbanStatus map
 	vectorSearchService VectorSearchService
 	syncJobQueue        chan EmailSyncJob // Job queue for email sync workers
 	workerWg            sync.WaitGroup    // Wait group for workers
+
+	// Suggestion cache: stores FromName and Subject for fast auto-suggest
+	// Key: userID, Value: map of unique suggestions (FromName or Subject)
+	suggestionCache   map[string]map[string]struct{}
+	suggestionCacheMu sync.RWMutex
 	eventService        EventService      // injected event service
 }
 
@@ -89,6 +95,7 @@ func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo 
 		geminiService:         nil, // cần set sau
 		kanbanStatus:          make(map[string]string),
 		syncJobQueue:          make(chan EmailSyncJob, 1000), // Buffered channel for jobs
+		suggestionCache:       make(map[string]map[string]struct{}),
 	}
 	uc.startSnoozeChecker()
 	uc.startSyncWorkers(5) // Start 5 worker goroutines
@@ -115,24 +122,27 @@ func (u *emailUsecase) startSyncWorkers(workerCount int) {
 // syncWorker processes email sync jobs from the queue
 func (u *emailUsecase) syncWorker(workerID int) {
 	defer u.workerWg.Done()
+	log.Printf("[VectorSync] Worker %d started", workerID)
 
 	for job := range u.syncJobQueue {
 		if u.vectorSearchService == nil {
+			log.Printf("[VectorSync] Worker %d: vectorSearchService is nil", workerID)
 			continue
 		}
 
-		// Check if email has already been synced (optimized: 1 query instead of 2)
-		wasAlreadySynced, err := u.emailSyncHistoryRepo.EnsureEmailSynced(job.UserID, job.EmailID)
+		// Check if email has already been synced (read-only check, doesn't insert)
+		alreadySynced, err := u.emailSyncHistoryRepo.IsEmailSynced(job.UserID, job.EmailID)
 		if err != nil {
-			fmt.Printf("[Worker %d] Failed to check sync history for email %s: %v\n", workerID, job.EmailID, err)
+			log.Printf("[VectorSync] Worker %d: Error checking sync status for %s: %v", workerID, job.EmailID, err)
 			continue
 		}
 
-		if wasAlreadySynced {
-			// Email already synced, skip
-			fmt.Printf("[Worker %d] Email %s already synced, skipping\n", workerID, job.EmailID)
+		if alreadySynced {
+			// Email already synced, skip silently (don't log to avoid spam)
 			continue
 		}
+
+		log.Printf("[VectorSync] Worker %d: Syncing email %s to vector DB", workerID, job.EmailID)
 
 		// Email not synced yet, upsert to vector DB
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -140,9 +150,16 @@ func (u *emailUsecase) syncWorker(workerID int) {
 		cancel()
 
 		if err != nil {
-			fmt.Printf("[Worker %d] Failed to sync email %s to vector DB: %v\n", workerID, job.EmailID, err)
+			// Log embedding error - will retry next time email is fetched
+			log.Printf("[VectorSync] Worker %d: Failed to sync email %s: %v", workerID, job.EmailID, err)
+			continue // Don't mark as synced so it can retry
+		}
+
+		// Mark as synced ONLY after successful embedding
+		if markErr := u.emailSyncHistoryRepo.MarkEmailAsSynced(job.UserID, job.EmailID); markErr != nil {
+			log.Printf("[VectorSync] Worker %d: Failed to mark email %s as synced: %v", workerID, job.EmailID, markErr)
 		} else {
-			fmt.Printf("[Worker %d] Successfully synced email %s to vector DB\n", workerID, job.EmailID)
+			log.Printf("[VectorSync] Worker %d: Successfully synced email %s", workerID, job.EmailID)
 		}
 	}
 }
@@ -154,39 +171,58 @@ func (u *emailUsecase) checkSnoozedEmails() {
 		return
 	}
 
+	// Get snoozed mappings to know previous columns and userIDs
+	snoozedMappings, err := u.emailKanbanColumnRepo.GetAllSnoozedMappings()
+	if err != nil {
+		log.Printf("Failed to get snoozed mappings: %v", err)
+		return
+	}
+
+	// Create lookup map for quick access
+	mappingByEmailID := make(map[string]repository.SnoozedEmailMapping)
+	for _, m := range snoozedMappings {
+		mappingByEmailID[m.EmailID] = m
+	}
+
 	now := time.Now()
 	for _, email := range emails {
 		if email.SnoozedUntil != nil && email.SnoozedUntil.Before(now) {
-			// Wake up!
-			u.kanbanStatus[email.ID] = "inbox"
-			email.Status = "inbox"
+			// Wake up! Restore to previous column
+			mapping, ok := mappingByEmailID[email.ID]
+			targetColumn := "inbox" // Default fallback
+			if ok && mapping.PreviousColumnID != "" {
+				targetColumn = mapping.PreviousColumnID
+			}
+
+			u.kanbanStatusMu.Lock()
+			u.kanbanStatus[email.ID] = targetColumn
+			u.kanbanStatusMu.Unlock()
+
+			email.Status = targetColumn
 			email.SnoozedUntil = nil
 			u.emailRepo.UpdateEmail(email)
 
-			// Update persistent mapping if UserID is available (important for Gmail/IMAP)
-			if email.UserID != "" {
-				if err := u.emailKanbanColumnRepo.SetEmailColumn(email.UserID, email.ID, "inbox"); err != nil {
-					fmt.Printf("Failed to update persistent column for email %s: %v\n", email.ID, err)
-				}
-				
-				// Notify frontend via SSE
-				if u.eventService != nil {
-					u.eventService.SendToUser(email.UserID, "email_update", map[string]string{
-						"action": "unsnooze",
-						"email_id": email.ID,
-						"mailbox_id": "inbox",
-					})
-				}
+			// Update DB mapping to restore column
+			if ok {
+				u.emailKanbanColumnRepo.SetEmailColumn(mapping.UserID, email.ID, targetColumn)
 			}
 
-			fmt.Printf("Email %s woke up from snooze\n", email.ID)
+			fmt.Printf("Email %s woke up from snooze, restored to %s\n", email.ID, targetColumn)
 		}
 	}
 }
 
 func (u *emailUsecase) SnoozeEmail(userID, emailID string, snoozeUntil time.Time) error {
-	// Update local status map
+	// Get current column before snoozing (to restore later)
+	previousColumn, _ := u.emailKanbanColumnRepo.GetEmailColumn(userID, emailID)
+	if previousColumn == "" || previousColumn == "snoozed" {
+		previousColumn = "inbox" // Default to inbox if no column or already snoozed
+	}
+
+	// Update local status with lock
+	u.kanbanStatusMu.Lock()
 	u.kanbanStatus[emailID] = "snoozed"
+	u.kanbanStatusMu.Unlock()
 
 	// Fetch the full email object (from provider or repo)
 	email, err := u.GetEmailByID(userID, emailID)
@@ -201,14 +237,52 @@ func (u *emailUsecase) SnoozeEmail(userID, emailID string, snoozeUntil time.Time
 		email.Status = "snoozed"
 		email.SnoozedUntil = &snoozeUntil
 		email.UserID = userID // Critical for wake-up logic
-		
+
 		// Persist to local repo so the background checker can find it
 		if err := u.emailRepo.UpsertEmail(email); err != nil {
 			log.Printf("[SnoozeEmail] Failed to upsert email to local repo: %v", err)
 		}
 	}
 
+	// Persist email-column mapping with previous column for restore
+	if err := u.emailKanbanColumnRepo.SnoozeEmailToColumn(userID, emailID, previousColumn); err != nil {
+		log.Printf("Failed to save snooze email-column mapping: %v", err)
+	}
+
 	return nil
+}
+
+// UnsnoozeEmail manually unsnoozes an email and restores it to its previous column
+func (u *emailUsecase) UnsnoozeEmail(userID, emailID string) (string, error) {
+	// Get previous column from mapping
+	previousColumn, err := u.emailKanbanColumnRepo.GetPreviousColumn(userID, emailID)
+	if err != nil {
+		log.Printf("Failed to get previous column for email %s: %v", emailID, err)
+		previousColumn = "inbox" // Default fallback
+	}
+	if previousColumn == "" {
+		previousColumn = "inbox"
+	}
+
+	// Update local status with lock
+	u.kanbanStatusMu.Lock()
+	u.kanbanStatus[emailID] = previousColumn
+	u.kanbanStatusMu.Unlock()
+
+	// Update email object in repository
+	email, err := u.emailRepo.GetEmailByID(emailID)
+	if err == nil && email != nil {
+		email.Status = previousColumn
+		email.SnoozedUntil = nil
+		u.emailRepo.UpdateEmail(email)
+	}
+
+	// Update DB mapping to restore column
+	if err := u.emailKanbanColumnRepo.SetEmailColumn(userID, emailID, previousColumn); err != nil {
+		log.Printf("Failed to update email-column mapping: %v", err)
+	}
+
+	return previousColumn, nil
 }
 
 // Lấy summary email qua Gemini
@@ -363,7 +437,7 @@ func (u *emailUsecase) GetEmailsByMailbox(userID, mailboxID string, limit, offse
 	if err == nil {
 		// Sync emails to vector DB asynchronously (don't block the request)
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 	}
 	return emails, total, err
@@ -401,7 +475,7 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 		email, err := u.imapProvider.GetEmailByID(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
 		if err == nil && email != nil {
 			// Sync email to vector DB asynchronously
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 		return email, err
 	}
@@ -421,7 +495,7 @@ func (u *emailUsecase) GetEmailByID(userID, id string) (*emaildomain.Email, erro
 	email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 	if err == nil && email != nil {
 		// Sync email to vector DB asynchronously
-		u.syncEmailToVectorDB(userID, email)
+		u.SyncEmailToVectorDB(userID, email)
 	}
 	return email, err
 }
@@ -636,6 +710,38 @@ func (u *emailUsecase) ArchiveEmail(userID, id string) error {
 	return u.mailProvider.ArchiveEmail(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
 }
 
+// PermanentDeleteEmail permanently deletes an email (for emails in trash)
+func (u *emailUsecase) PermanentDeleteEmail(userID, id string) error {
+	user, err := u.userRepo.FindByID(userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	// IMAP Handler
+	if user.Provider == "imap" {
+		decryptedPass, err := crypto.Decrypt(user.ImapPassword, u.config.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt password: %w", err)
+		}
+		return u.imapProvider.PermanentDeleteEmail(context.Background(), user.ImapServer, user.ImapPort, user.Email, decryptedPass, id)
+	}
+
+	accessToken, refreshToken, err := u.getUserTokens(userID)
+	if err != nil {
+		return err
+	}
+
+	if accessToken == "" {
+		// Fallback to local storage - not supported for permanent delete
+		return nil
+	}
+
+	ctx := context.Background()
+	return u.mailProvider.PermanentDeleteEmail(ctx, accessToken, refreshToken, id, u.makeTokenUpdateCallback(userID))
+}
 func (u *emailUsecase) WatchMailbox(userID string) error {
 	accessToken, refreshToken, err := u.getUserTokens(userID)
 	if err != nil {
@@ -726,6 +832,21 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID, sourceColu
 
 		// Apply label changes via Gmail API
 		if len(addLabelIDs) > 0 || len(removeLabelIDs) > 0 {
+			// Deduplicate: remove labels that appear in both add and remove lists
+			addSet := make(map[string]bool)
+			for _, id := range addLabelIDs {
+				addSet[id] = true
+			}
+
+			// Filter out labels from removeLabelIDs that are also in addLabelIDs
+			var filteredRemove []string
+			for _, id := range removeLabelIDs {
+				if !addSet[id] {
+					filteredRemove = append(filteredRemove, id)
+				}
+			}
+			removeLabelIDs = filteredRemove
+
 			ctx := context.Background()
 			log.Printf("[MoveEmail] Source: %s (label: %v), Target: %s (label: %v)",
 				actualSourceColumnID, 
@@ -733,15 +854,21 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID, sourceColu
 				mailboxID,
 				func() string { if targetColumn != nil { return targetColumn.GmailLabelID } else { return "nil" }}())
 			log.Printf("[MoveEmail] Applying labels - Add: %v, Remove: %v", addLabelIDs, removeLabelIDs)
-			err = u.mailProvider.ModifyMessageLabels(ctx, accessToken, refreshToken, emailID, addLabelIDs, removeLabelIDs, u.makeTokenUpdateCallback(userID))
-			if err != nil {
-				return fmt.Errorf("failed to modify message labels: %w", err)
+
+			// Only call API if there are actual changes
+			if len(addLabelIDs) > 0 || len(removeLabelIDs) > 0 {
+				err = u.mailProvider.ModifyMessageLabels(ctx, accessToken, refreshToken, emailID, addLabelIDs, removeLabelIDs, u.makeTokenUpdateCallback(userID))
+				if err != nil {
+					return fmt.Errorf("failed to modify message labels: %w", err)
+				}
 			}
 		}
 	}
 
-	// Update local Kanban status map
+	// Update local Kanban status map with lock
+	u.kanbanStatusMu.Lock()
 	u.kanbanStatus[emailID] = mailboxID
+	u.kanbanStatusMu.Unlock()
 
 	// Save email-column mapping to DB (for both default and custom columns)
 	// This allows us to persist which emails belong to which columns
@@ -780,20 +907,25 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 		// Sync emails to vector DB asynchronously
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
 		var filtered []*emaildomain.Email
 		if status == "inbox" {
 			for _, email := range emails {
+				u.kanbanStatusMu.RLock()
 				s, ok := u.kanbanStatus[email.ID]
+				u.kanbanStatusMu.RUnlock()
 				if !ok || s == "inbox" {
 					filtered = append(filtered, email)
 				}
 			}
 		} else {
 			for _, email := range emails {
-				if s, ok := u.kanbanStatus[email.ID]; ok && s == status {
+				u.kanbanStatusMu.RLock()
+				s, ok := u.kanbanStatus[email.ID]
+				u.kanbanStatusMu.RUnlock()
+				if ok && s == status {
 					filtered = append(filtered, email)
 				}
 			}
@@ -831,21 +963,75 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 		// Sync emails to vector DB asynchronously
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
-		return emails, total, nil
+		// Exclude snoozed emails from this column
+		snoozedEmailIDs, _ := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, "snoozed")
+		snoozedSet := make(map[string]bool)
+		for _, id := range snoozedEmailIDs {
+			snoozedSet[id] = true
+		}
+
+		var filtered []*emaildomain.Email
+		for _, email := range emails {
+			if !snoozedSet[email.ID] {
+				filtered = append(filtered, email)
+			}
+		}
+
+		return filtered, total, nil
 	}
 
-	// Default behavior: Fetch from INBOX and filter by local mapping
-	emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit*2, offset, "", u.makeTokenUpdateCallback(userID))
+	// Special handling for "snoozed" column - fetch from DB mapping directly
+	if status == "snoozed" {
+		snoozedEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, "snoozed")
+		if err != nil {
+			log.Printf("[GetEmailsByStatus] Failed to get snoozed emails from DB: %v", err)
+			return []*emaildomain.Email{}, 0, nil
+		}
+
+		if len(snoozedEmailIDs) == 0 {
+			return []*emaildomain.Email{}, 0, nil
+		}
+
+		// Apply pagination
+		start := offset
+		end := offset + limit
+		if start >= len(snoozedEmailIDs) {
+			return []*emaildomain.Email{}, len(snoozedEmailIDs), nil
+		}
+		if end > len(snoozedEmailIDs) {
+			end = len(snoozedEmailIDs)
+		}
+		paginatedIDs := snoozedEmailIDs[start:end]
+
+		// Fetch full email details from Gmail
+		var emails []*emaildomain.Email
+		for _, emailID := range paginatedIDs {
+			email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				log.Printf("[GetEmailsByStatus] Failed to fetch snoozed email %s: %v", emailID, err)
+				continue
+			}
+			if email != nil {
+				emails = append(emails, email)
+			}
+		}
+
+		return emails, len(snoozedEmailIDs), nil
+	}
+
+
+	// Default behavior: Fetch from INBOX with exact limit (avoid over-fetching for performance)
+	emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit, offset, "", u.makeTokenUpdateCallback(userID))
 	if err != nil {
 		return nil, 0, err
 	}
 
 	// Sync emails to vector DB asynchronously
 	for _, email := range emails {
-		u.syncEmailToVectorDB(userID, email)
+		u.SyncEmailToVectorDB(userID, email)
 	}
 
 	// Check if this is a default column or custom column
@@ -869,54 +1055,98 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			}
 		}
 
+		// Get snoozed email IDs to exclude them from other columns
+		snoozedEmailIDs := make(map[string]bool)
+		if status != "snoozed" {
+			snoozedIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, "snoozed")
+			if err == nil {
+				for _, id := range snoozedIDs {
+					snoozedEmailIDs[id] = true
+				}
+			}
+		}
+
 		// Filter emails
 		if status == "inbox" {
 			// For inbox: include emails that are in inbox (no mapping) or explicitly mapped to inbox
+			// Exclude snoozed emails
 			for _, email := range emails {
+				// Skip if email is snoozed
+				if snoozedEmailIDs[email.ID] {
+					continue
+				}
 				// Check DB mapping first
 				if emailIDSet[email.ID] {
 					filtered = append(filtered, email)
 					continue
 				}
 				// Fallback to in-memory status
+				u.kanbanStatusMu.RLock()
 				s, ok := u.kanbanStatus[email.ID]
+				u.kanbanStatusMu.RUnlock()
 				if !ok || s == "inbox" {
 					filtered = append(filtered, email)
 				}
 			}
 		} else {
 			// For other default columns: only include if mapped
+			// Exclude snoozed emails
 			for _, email := range emails {
+				// Skip if email is snoozed
+				if snoozedEmailIDs[email.ID] {
+					continue
+				}
 				// Check DB mapping first
 				if emailIDSet[email.ID] {
 					filtered = append(filtered, email)
 					continue
 				}
 				// Fallback to in-memory status
-				if s, ok := u.kanbanStatus[email.ID]; ok && s == status {
+				u.kanbanStatusMu.RLock()
+				s, ok := u.kanbanStatus[email.ID]
+				u.kanbanStatusMu.RUnlock()
+				if ok && s == status {
 					filtered = append(filtered, email)
 				}
 			}
 		}
 	} else {
-		// Custom column without gmail_label_id: check DB mapping only
+		// Custom column without gmail_label_id: fetch emails directly using DB mapping
+		// Similar to how "snoozed" column works
 		dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
 		if err != nil {
-			// If error, return empty list
+			log.Printf("[GetEmailsByStatus] Failed to get emails for custom column %s: %v", status, err)
 			return []*emaildomain.Email{}, 0, nil
 		}
 
-		emailIDSet := make(map[string]bool)
-		for _, id := range dbEmailIDs {
-			emailIDSet[id] = true
+		if len(dbEmailIDs) == 0 {
+			return []*emaildomain.Email{}, 0, nil
 		}
 
-		// Filter emails that are in the custom column
-		for _, email := range emails {
-			if emailIDSet[email.ID] {
+		// Apply pagination
+		start := offset
+		end := offset + limit
+		if start >= len(dbEmailIDs) {
+			return []*emaildomain.Email{}, len(dbEmailIDs), nil
+		}
+		if end > len(dbEmailIDs) {
+			end = len(dbEmailIDs)
+		}
+		paginatedIDs := dbEmailIDs[start:end]
+
+		// Fetch full email details from Gmail
+		for _, emailID := range paginatedIDs {
+			email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				log.Printf("[GetEmailsByStatus] Failed to fetch email %s for column %s: %v", emailID, status, err)
+				continue
+			}
+			if email != nil {
 				filtered = append(filtered, email)
 			}
 		}
+
+		return filtered, len(dbEmailIDs), nil
 	}
 	return filtered, len(filtered), nil
 }
@@ -1256,7 +1486,7 @@ func (u *emailUsecase) syncMailboxEmails(userID, mailboxID string) {
 		// Note: GetEmailsByMailbox already calls syncEmailToVectorDB, but we want to ensure
 		// all emails are synced even if they were fetched before
 		for _, email := range emails {
-			u.syncEmailToVectorDB(userID, email)
+			u.SyncEmailToVectorDB(userID, email)
 		}
 
 		log.Printf("Synced %d emails from mailbox %s for user %s (offset %d/%d)", len(emails), mailboxID, userID, offset, total)

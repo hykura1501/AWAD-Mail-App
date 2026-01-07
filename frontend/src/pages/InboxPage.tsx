@@ -1,169 +1,92 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { logout } from "@/store/authSlice";
-import { authService } from "@/services/auth.service";
-import { getAccessToken } from "@/lib/api-client";
+import { useAppSelector } from "@/store/hooks";
+import { emailService } from "@/services/email.service";
 import type { Email } from "@/types/email";
+
 import MailboxList from "@/components/inbox/MailboxList";
 import EmailList from "@/components/inbox/EmailList";
 import EmailDetail from "@/components/inbox/EmailDetail";
 import ComposeEmail from "@/components/inbox/ComposeEmail";
 import SearchBar from "@/components/search/SearchBar";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { API_BASE_URL } from "@/config/api";
+import { useQueryClient } from "@tanstack/react-query";
 import KanbanToggle from "@/components/kanban/KanbanToggle";
+import { TaskDrawer } from "@/components/tasks";
+import { useTheme, useSSE, useFCM, useEmailActions } from "@/hooks";
+import { SEARCH_MODES, type SearchMode } from "@/constants";
 
 export default function InboxPage() {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
   const user = useAppSelector((state) => state.auth.user);
+
+  // Initialize FCM for push notifications
+  useFCM();
+
   const { mailbox, emailId } = useParams<{
     mailbox?: string;
     emailId?: string;
   }>();
 
-  const [isComposeOpen, setIsComposeOpen] = useState(false);
-  const [composeInitialData, setComposeInitialData] = useState({
-    to: [] as string[],
-    cc: [] as string[],
-    subject: "",
-    body: "",
-    quotedContent: "",
-    quotedHeader: "",
-  });
+  // Email compose actions - extracted to custom hook
+  const {
+    isComposeOpen,
+    setIsComposeOpen,
+    composeData,
+    handleReply,
+    handleReplyAll,
+    handleForward,
+    clearComposeData,
+  } = useEmailActions({ userEmail: user?.email });
+
   const [mobileView, setMobileView] = useState<"mailbox" | "list" | "detail">(
     "list"
   );
   // Search query from header - when set, shows search results in email list
   const [headerSearchQuery, setHeaderSearchQuery] = useState("");
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window !== "undefined") {
-      const savedTheme = localStorage.getItem("theme");
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light";
-      const initialTheme = (savedTheme as "light" | "dark") || systemTheme;
 
-      // Apply theme immediately on mount
-      if (initialTheme === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
+  // Theme is still used for EmailDetail component
+  const { theme } = useTheme();
 
-      return initialTheme;
-    }
-    return "light";
-  });
-
-  const toggleTheme = () => {
-    const newTheme = theme === "light" ? "dark" : "light";
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    if (newTheme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  };
+  // Task drawer state
+  const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
 
   // Use URL params or default to 'inbox'
   const selectedMailboxId = mailbox || "inbox";
   const selectedEmailId = emailId || null;
+  // Search mode: "semantic" or "fuzzy"
+  const [searchMode, setSearchMode] = useState<SearchMode>(SEARCH_MODES.SEMANTIC);
 
-  const handleSearch = (query: string) => {
+  const handleSearch = (query: string, mode: "semantic" | "fuzzy") => {
     const trimmed = query.trim();
     if (!trimmed) return;
-    // Set search query to show results in email list column
+    // Set search query and mode to show results in email list column
     setHeaderSearchQuery(trimmed);
+    setSearchMode(mode);
   };
 
   const handleClearSearch = () => {
     setHeaderSearchQuery("");
   };
 
-  useEffect(() => {
-    if (user) {
-      // Start watching for email updates
-      // Watch mailbox for updates
-      // Note: watchMailbox is triggered elsewhere (e.g., login), so we only manage SSE here.
-
-      // Connect to SSE
-      const token = getAccessToken();
-      const eventSource = new EventSource(
-        `${API_BASE_URL}/events?token=${token}`,
-        {
-          withCredentials: true,
-        }
-      );
-
-      let lastMutationTime = 0;
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "email_update") {
-            console.log("Received email update:", data.payload);
-
-            // Ignore SSE updates for 3 seconds after user actions to prevent conflicts
-            const timeSinceLastMutation = Date.now() - lastMutationTime;
-            if (timeSinceLastMutation < 3000) {
-              console.log("Ignoring SSE update - recent user action");
-              return;
-            }
-
-            // Only invalidate for new emails or external changes
-            queryClient.invalidateQueries({
-              queryKey: ["emails"],
-              refetchType: "none",
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["mailboxes"],
-              refetchType: "none",
-            });
-          }
-        } catch (error) {
-          console.error("Error parsing SSE message:", error);
-        }
-      };
-
-      // Track mutation time to debounce SSE updates
-      const unsubscribe = queryClient.getMutationCache().subscribe((event) => {
-        if (
-          event?.type === "updated" &&
-          event.mutation.state.status === "pending"
-        ) {
-          lastMutationTime = Date.now();
-        }
-      });
-
-      eventSource.onerror = (error) => {
-        console.error("SSE error:", error);
-        eventSource.close();
-      };
-
-      return () => {
-        eventSource.close();
-        unsubscribe();
-      };
-    }
-      }, [user, queryClient]);
-
-  const logoutMutation = useMutation({
-    mutationFn: authService.logout,
-    onSuccess: () => {
-      dispatch(logout());
-      queryClient.clear();
-      navigate("/login");
+  // SSE connection for real-time updates - extracted to custom hook
+  useSSE({
+    enabled: !!user,
+    handlers: {
+      onEmailUpdate: () => {
+        // Just refetch queries - FCM handles toast notifications
+        queryClient.refetchQueries({ queryKey: ["emails"] });
+        queryClient.refetchQueries({ queryKey: ["mailboxes"] });
+      },
     },
   });
 
-  const handleLogout = () => {
-    logoutMutation.mutate();
-  };
+  // Register Gmail push notifications when user is available
+  useEffect(() => {
+    if (user) {
+      emailService.watchMailbox().catch(console.error);
+    }
+  }, [user]);
 
   const handleSelectMailbox = (id: string) => {
     // Clear search when selecting a mailbox
@@ -179,126 +102,6 @@ export default function InboxPage() {
   const handleToggleStar = () => {
     // Do nothing - let the mutation handle cache updates
     // This callback is kept for backward compatibility but no longer invalidates
-  };
-
-  const handleForward = (email: Email) => {
-    const originalBody = email.body || email.preview || "";
-    const forwardHeader = `---------- Forwarded message ---------\nFrom: ${email.from}\nDate: ${new Date(email.received_at).toLocaleString()}\nSubject: ${email.subject}\nTo: ${email.to.join(", ")}`;
-    
-    setComposeInitialData({
-      to: [],
-      cc: [],
-      subject: `Fwd: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: forwardHeader,
-    });
-    setIsComposeOpen(true);
-  };
-
-  const handleReply = (email: Email) => {
-    const date = new Date(email.received_at);
-    const weekday = date.toLocaleDateString("vi-VN", { weekday: "short" });
-    const day = date.getDate();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const time = date.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const dateStr = `Vào ${weekday}, ${day} thg ${month}, ${year} vào lúc ${time}`;
-
-    let senderName = email.from;
-    let senderEmail = email.from;
-    const match = email.from.match(/^(.*?)\s*<(.*)>$/);
-    if (match) {
-      senderName = match[1].replace(/"/g, "").trim();
-      senderEmail = match[2].trim();
-    } else {
-      senderName = email.from.replace(/"/g, "").trim();
-      if (senderName.includes("@")) {
-        senderEmail = senderName;
-      }
-    }
-
-    const senderHtml = `${senderName} <${senderEmail}>`;
-
-    const originalBody = email.body || email.preview || "";
-    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
-    
-    setComposeInitialData({
-      to: [senderEmail],
-      cc: [],
-      subject: `Re: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: quoteHeader,
-    });
-    setIsComposeOpen(true);
-  };
-
-  const handleReplyAll = (email: Email) => {
-    const date = new Date(email.received_at);
-    const weekday = date.toLocaleDateString("vi-VN", { weekday: "short" });
-    const day = date.getDate();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const time = date.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    const dateStr = `Vào ${weekday}, ${day} thg ${month}, ${year} vào lúc ${time}`;
-
-    let senderName = email.from;
-    let senderEmail = email.from;
-    const match = email.from.match(/^(.*?)\s*<(.*)>$/);
-    if (match) {
-      senderName = match[1].replace(/"/g, "").trim();
-      senderEmail = match[2].trim();
-    } else {
-      senderName = email.from.replace(/"/g, "").trim();
-      if (senderName.includes("@")) {
-        senderEmail = senderName;
-      }
-    }
-
-    const senderHtml = `${senderName} <${senderEmail}>`;
-
-    // Calculate CC list
-    // CC = (Original To + Original CC) - (Me + Sender)
-    const myEmail = user?.email || "";
-    const allRecipients = [...(email.to || []), ...(email.cc || [])];
-
-    const ccList = allRecipients
-      .map((r) => {
-        const match = r.match(/^(.*?)\s*<(.*)>$/);
-        return match ? match[2].trim() : r.trim();
-      })
-      .filter(
-        (email) =>
-          email.toLowerCase() !== myEmail.toLowerCase() &&
-          email.toLowerCase() !== senderEmail.toLowerCase()
-      );
-
-    // Remove duplicates
-    const uniqueCcList = [...new Set(ccList)];
-
-    const originalBody = email.body || email.preview || "";
-    const quoteHeader = `Vào ${dateStr}, ${senderHtml} đã viết:`;
-    
-    setComposeInitialData({
-      to: [senderEmail],
-      cc: uniqueCcList,
-      subject: `Re: ${email.subject}`,
-      body: "",
-      quotedContent: originalBody,
-      quotedHeader: quoteHeader,
-    });
-    setIsComposeOpen(true);
   };
 
   return (
@@ -336,7 +139,7 @@ export default function InboxPage() {
           />
         </div>
 
-        <KanbanToggle isKanban={false} onToggle={() => navigate("/kanban")} />
+          <KanbanToggle isKanban={false} onToggle={() => navigate("/kanban")} />
       </div>
 
       {/* Main Content Area */}
@@ -349,9 +152,7 @@ export default function InboxPage() {
               selectedMailboxId={headerSearchQuery ? null : selectedMailboxId}
               onSelectMailbox={handleSelectMailbox}
               onComposeClick={() => setIsComposeOpen(true)}
-              onLogout={handleLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
+              onNavigateToTasks={() => setIsTaskDrawerOpen(true)}
             />
           </div>
           {/* Column 2: Email List */}
@@ -362,6 +163,7 @@ export default function InboxPage() {
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
               searchQuery={headerSearchQuery}
+              searchMode={searchMode}
               onClearSearch={handleClearSearch}
             />
           </div>
@@ -409,9 +211,6 @@ export default function InboxPage() {
                 setIsComposeOpen(true);
                 setMobileView("list");
               }}
-              onLogout={handleLogout}
-              theme={theme}
-              onToggleTheme={toggleTheme}
             />
           </div>
 
@@ -427,6 +226,7 @@ export default function InboxPage() {
               onSelectEmail={handleSelectEmail}
               onToggleStar={handleToggleStar}
               searchQuery={headerSearchQuery}
+              searchMode={searchMode}
               onClearSearch={handleClearSearch}
             />
           </div>
@@ -489,16 +289,22 @@ export default function InboxPage() {
         open={isComposeOpen}
         onOpenChange={(open) => {
           setIsComposeOpen(open);
-          if (!open)
-            setComposeInitialData({ to: [], cc: [], subject: "", body: "", quotedContent: "", quotedHeader: "" });
+          if (!open) clearComposeData();
         }}
-        initialTo={composeInitialData.to}
-        initialCc={composeInitialData.cc}
-        initialSubject={composeInitialData.subject}
-        initialBody={composeInitialData.body}
-        quotedContent={composeInitialData.quotedContent}
-        quotedHeader={composeInitialData.quotedHeader}
+        initialTo={composeData.to}
+        initialCc={composeData.cc}
+        initialSubject={composeData.subject}
+        initialBody={composeData.body}
+        quotedContent={composeData.quotedContent}
+        quotedHeader={composeData.quotedHeader}
+        originalEmailId={composeData.originalEmailId}
+        originalAttachments={composeData.originalAttachments}
+        forwardAttachments={composeData.forwardAttachments}
+        includeInlineImages={composeData.includeInlineImages}
       />
+
+      {/* Task Drawer */}
+      <TaskDrawer isOpen={isTaskDrawerOpen} onClose={() => setIsTaskDrawerOpen(false)} />
     </div>
   );
 }

@@ -1,12 +1,36 @@
 import apiClient from "@/lib/api-client";
+import { getAccessToken } from "@/lib/api-client";
+import { API_BASE_URL } from "@/config/api";
 import type {
   Mailbox,
   Email,
   EmailsResponse,
   KanbanColumnConfig,
+  Attachment,
 } from "@/types/email";
 
 export const emailService = {
+  /**
+   * Download an attachment as a File object (for forwarding emails)
+   * @param emailId - The email ID containing the attachment
+   * @param attachment - The attachment metadata
+   * @returns File object that can be used in FormData for sending
+   */
+  getAttachmentAsFile: async (
+    emailId: string,
+    attachment: Attachment
+  ): Promise<File> => {
+    const token = getAccessToken();
+    const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachment.id}?token=${token}`;
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download attachment: ${attachment.name}`);
+    }
+    
+    const blob = await response.blob();
+    return new File([blob], attachment.name, { type: attachment.mime_type });
+  },
   getEmailsByStatus: async (
     status: string,
     limit = 50,
@@ -40,6 +64,12 @@ export const emailService = {
     await apiClient.post(`/emails/${emailId}/snooze`, {
       snooze_until: snoozeUntil.toISOString(),
     });
+  },
+  unsnoozeEmail: async (emailId: string): Promise<{ targetColumn: string }> => {
+    const response = await apiClient.post<{ message: string; target_column: string }>(
+      `/emails/${emailId}/unsnooze`
+    );
+    return { targetColumn: response.data.target_column };
   },
   getAllMailboxes: async (): Promise<Mailbox[]> => {
     const response = await apiClient.get<{ mailboxes: Mailbox[] }>(
@@ -86,13 +116,19 @@ export const emailService = {
     return response.data;
   },
 
+  /**
+   * Send an email with optional attachments and inline images
+   * 
+   * @param inlineImages - Inline images with contentId for CID embedding
+   */
   sendEmail: async (
     to: string,
     cc: string,
     bcc: string,
     subject: string,
     body: string,
-    files: File[] = []
+    files: File[] = [],
+    inlineImages: { file: File; contentId: string }[] = []
   ): Promise<void> => {
     const formData = new FormData();
     formData.append("to", to);
@@ -100,9 +136,26 @@ export const emailService = {
     formData.append("bcc", bcc);
     formData.append("subject", subject);
     formData.append("body", body);
+    
+    // Regular attachments
     files.forEach((file) => {
       formData.append("files", file);
     });
+
+    // Inline images with Content-ID metadata
+    if (inlineImages.length > 0) {
+      // Send metadata as JSON
+      const inlineMetadata = inlineImages.map((img) => ({
+        filename: img.file.name,
+        content_id: img.contentId,
+      }));
+      formData.append("inline_images_meta", JSON.stringify(inlineMetadata));
+      
+      // Send files
+      inlineImages.forEach((img) => {
+        formData.append("inline_images", img.file);
+      });
+    }
 
     await apiClient.post("/emails/send", formData, {
       headers: {
@@ -117,6 +170,44 @@ export const emailService = {
 
   archiveEmail: async (id: string): Promise<void> => {
     await apiClient.post(`/emails/${id}/archive`);
+  },
+
+  // Permanently delete a single email (for emails in trash)
+  permanentDeleteEmail: async (id: string): Promise<void> => {
+    await apiClient.delete(`/emails/${id}/permanent`);
+  },
+
+  // Bulk operations
+  bulkMarkAsRead: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "mark_read" }
+    );
+    return response.data;
+  },
+
+  bulkMarkAsUnread: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "mark_unread" }
+    );
+    return response.data;
+  },
+
+  bulkTrash: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "trash" }
+    );
+    return response.data;
+  },
+
+  bulkPermanentDelete: async (emailIds: string[]): Promise<{ success_count: number; fail_count: number }> => {
+    const response = await apiClient.post<{ success_count: number; fail_count: number }>(
+      "/emails/bulk",
+      { email_ids: emailIds, action: "permanent_delete" }
+    );
+    return response.data;
   },
 
   watchMailbox: async (): Promise<void> => {
@@ -196,5 +287,17 @@ export const emailService = {
     orders: Record<string, number>
   ): Promise<void> => {
     await apiClient.put("/kanban/columns/orders", { orders });
+  },
+
+  // Queue emails for background AI summary generation
+  // Returns cached summaries immediately; new summaries arrive via SSE "summary_update"
+  queueSummaries: async (
+    emailIds: string[]
+  ): Promise<{ summaries: Record<string, string>; queued: number }> => {
+    const response = await apiClient.post<{
+      summaries: Record<string, string>;
+      queued: number;
+    }>("/kanban/summarize", { email_ids: emailIds });
+    return response.data;
   },
 };

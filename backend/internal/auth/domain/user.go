@@ -27,6 +27,6 @@ type User struct {
 
 type RefreshToken struct {
 	Token     string    `json:"token" gorm:"primaryKey"`
-	UserID    string    `json:"user_id" gorm:"uniqueIndex"`
+	UserID    string    `json:"user_id" gorm:"index"` // Regular index, not unique - allows multi-device login
 	ExpiresAt time.Time `json:"expires_at"`
 }
