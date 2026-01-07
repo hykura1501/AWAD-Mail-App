@@ -20,8 +20,9 @@ import KanbanCardActions from "@/components/kanban/KanbanCardActions";
 import MobileColumnTabs from "@/components/kanban/MobileColumnTabs";
 import MobileEmailCard from "@/components/kanban/MobileEmailCard";
 import { TaskDrawer } from "@/components/tasks";
+import SearchModal from "@/components/search/SearchModal";
 
-import { useTheme, useSSE, useFCM, useKanbanSnooze, useKanbanData, useKanbanSummaries } from "@/hooks";
+import { useTheme, useSSE, useFCM, useKanbanSnooze, useKanbanData, useKanbanSummaries, useKanbanSearchNavigation } from "@/hooks";
 
 
 export default function KanbanPage() {
@@ -57,6 +58,9 @@ export default function KanbanPage() {
 
   // Snoozed drawer state
   const [isSnoozedDrawerOpen, setIsSnoozedDrawerOpen] = useState(false);
+
+  // Search modal state
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   // Task drawer state
   const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
@@ -101,6 +105,19 @@ export default function KanbanPage() {
   const [mobileView, setMobileView] = useState<"mailbox" | "kanban">("kanban");
   const [mobileSelectedColumn, setMobileSelectedColumn] =
     useState<string>("inbox");
+
+  // Search navigation hook - handles finding, navigating, and highlighting search results
+  const {
+    highlightedEmailId,
+    handleSearchResultClick,
+  } = useKanbanSearchNavigation({
+    kanbanEmails,
+    limit,
+    loadColumn: loadKanbanColumn,
+    setMobileSelectedColumn,
+    // Fallback: if email not found in first 500, open detail popup
+    onEmailNotFound: (emailId) => setDetailEmailId(emailId),
+  });
 
 
   // Snooze hook - handles dialog state and snooze logic
@@ -254,6 +271,7 @@ export default function KanbanPage() {
         onFilterChange={setFilters}
         snoozedCount={kanbanEmails.snoozed?.length || 0}
         onSnoozedClick={() => setIsSnoozedDrawerOpen(true)}
+        onSearchClick={() => setIsSearchModalOpen(true)}
         onSettingsClick={() => setIsSettingsOpen(true)}
       />
 
@@ -315,6 +333,7 @@ export default function KanbanPage() {
                 />
               )}
                onEmailClick={(emailId) => setDetailEmailId(emailId)}
+               highlightedEmailId={highlightedEmailId}
              />
           </div>
         </div>
@@ -596,6 +615,13 @@ export default function KanbanPage() {
 
       {/* Task Drawer */}
       <TaskDrawer isOpen={isTaskDrawerOpen} onClose={() => setIsTaskDrawerOpen(false)} />
+
+      {/* Search Modal */}
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        onEmailClick={handleSearchResultClick}
+      />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import KanbanFilters, { type SortOption, type FilterState } from "./KanbanFilters";
-import { Settings } from "lucide-react";
+import { Settings, Search } from "lucide-react";
 
 interface KanbanToolbarProps {
   sortBy: SortOption;
@@ -8,6 +8,7 @@ interface KanbanToolbarProps {
   onFilterChange: (filters: FilterState) => void;
   snoozedCount: number;
   onSnoozedClick: () => void;
+  onSearchClick: () => void;
   onSettingsClick: () => void;
 }
 
@@ -18,6 +19,7 @@ export default function KanbanToolbar({
   onFilterChange,
   snoozedCount,
   onSnoozedClick,
+  onSearchClick,
   onSettingsClick,
 }: KanbanToolbarProps) {
   return (
@@ -32,6 +34,14 @@ export default function KanbanToolbar({
           onSnoozedClick={onSnoozedClick}
         />
       </div>
+      <button
+        onClick={onSearchClick}
+        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+        title="Search emails"
+      >
+        <Search className="h-4 w-4" />
+        <span className="hidden xl:inline">Tìm kiếm</span>
+      </button>
       <button
         onClick={onSettingsClick}
         className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"

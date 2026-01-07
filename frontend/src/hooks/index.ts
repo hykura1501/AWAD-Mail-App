@@ -23,3 +23,8 @@ export { useEmailActions, type ComposeData } from "./useEmailActions";
 export { useKanbanData, type UseKanbanDataOptions, type UseKanbanDataReturn } from "./useKanbanData";
 export { useKanbanSummaries, type SummaryState, type UseKanbanSummariesReturn } from "./useKanbanSummaries";
 export { useKanbanSnooze, type EmailToSnooze, type UseKanbanSnoozeReturn } from "./useKanbanSnooze";
+export { 
+  useKanbanSearchNavigation, 
+  type UseKanbanSearchNavigationOptions, 
+  type UseKanbanSearchNavigationReturn 
+} from "./useKanbanSearchNavigation";

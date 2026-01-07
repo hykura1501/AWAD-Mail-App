@@ -35,6 +35,7 @@ export type KanbanBoardProps = {
   emailSummaries?: Record<string, { summary: string; loading: boolean }>;
   onRequestSummary?: (emailId: string) => void;
   isLoading?: boolean;
+  highlightedEmailId?: string | null;
 };
 
 function DraggableEmailCard({ 
@@ -44,7 +45,8 @@ function DraggableEmailCard({
   summary,
   summaryLoading,
   onRequestSummary,
-  columnId
+  columnId,
+  isHighlighted
 }: {
   email: Email; 
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
@@ -53,6 +55,7 @@ function DraggableEmailCard({
   summaryLoading?: boolean;
   onRequestSummary?: (emailId: string) => void;
   columnId?: string;
+  isHighlighted?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: email.id,
@@ -64,6 +67,7 @@ function DraggableEmailCard({
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      data-email-id={email.id}
       className={`
         group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm transition-all duration-200
         bg-white dark:bg-[#1A1D21] border-gray-100 dark:border-gray-800
@@ -71,6 +75,7 @@ function DraggableEmailCard({
         cursor-grab active:cursor-grabbing touch-none
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
         ${!email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""}
+        ${isHighlighted ? "email-highlight ring-2 ring-blue-500" : ""}
       `}
       onClick={() => onClick?.(email.id)}
     >
@@ -305,7 +310,8 @@ export default function KanbanBoard({
   onEmailClick,
   emailSummaries = {},
   onRequestSummary,
-  isLoading = false
+  isLoading = false,
+  highlightedEmailId
 }: KanbanBoardProps) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
   
@@ -374,6 +380,7 @@ export default function KanbanBoard({
                 summaryLoading={emailSummaries[email.id]?.loading}
                 onRequestSummary={onRequestSummary}
                 columnId={col.id}
+                isHighlighted={highlightedEmailId === email.id}
               />
             ))}
           </DroppableColumn>
