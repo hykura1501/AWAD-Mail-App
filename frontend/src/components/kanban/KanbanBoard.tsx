@@ -37,6 +37,7 @@ export type KanbanBoardProps = {
   isLoading?: boolean;
   highlightedEmailId?: string | null;
   focusedEmailId?: string | null;
+  processingEmailIds?: Set<string>;
 };
 
 function DraggableEmailCard({
@@ -48,7 +49,8 @@ function DraggableEmailCard({
   onRequestSummary,
   columnId,
   isHighlighted,
-  ...props
+  isFocused,
+  isProcessing,
 }: {
   email: Email;
   renderCardActions?: (email: Email, columnId?: string) => React.ReactNode;
@@ -59,6 +61,7 @@ function DraggableEmailCard({
   columnId?: string;
   isHighlighted?: boolean;
   isFocused?: boolean;
+  isProcessing?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: email.id,
@@ -68,14 +71,14 @@ function DraggableEmailCard({
   const elementRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
-    if (props.isFocused && elementRef.current) {
+    if (isFocused && elementRef.current) {
       elementRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'nearest',
         inline: 'nearest'
       });
     }
-  }, [props.isFocused]);
+  }, [isFocused]);
 
   const setMergedRef = (node: HTMLDivElement | null) => {
     setNodeRef(node);
@@ -96,10 +99,17 @@ function DraggableEmailCard({
         ${isDragging ? "opacity-30 scale-[0.98] grayscale" : "opacity-100"}
         ${!email.is_read ? "border-l-4 border-l-blue-500 dark:border-l-blue-400" : ""}
         ${isHighlighted ? "email-highlight ring-2 ring-blue-500" : ""}
-        ${props.isFocused ? "ring-2 ring-indigo-500 z-10" : ""}
+        ${isFocused ? "ring-2 ring-indigo-500 z-10" : ""}
+        ${isProcessing ? "opacity-70 pointer-events-none grayscale-[0.5]" : ""}
       `}
-      onClick={() => onClick?.(email.id)}
+      onClick={() => !isProcessing && onClick?.(email.id)}
     >
+      {isProcessing && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 dark:bg-black/20 rounded-xl backdrop-blur-[1px]">
+          <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shadow-sm" />
+        </div>
+      )}
+
       <div className="flex justify-between items-start gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {/* Unread indicator dot */}
@@ -333,8 +343,9 @@ export default function KanbanBoard({
   onRequestSummary,
   isLoading = false,
   highlightedEmailId,
-  focusedEmailId
-}: KanbanBoardProps) {
+  focusedEmailId,
+  processingEmailIds = new Set()
+}: KanbanBoardProps & { processingEmailIds?: Set<string> }) {
   const [activeEmail, setActiveEmail] = useState<Email | null>(null);
 
   const sensors = useSensors(
@@ -404,6 +415,7 @@ export default function KanbanBoard({
                 columnId={col.id}
                 isHighlighted={highlightedEmailId === email.id}
                 isFocused={focusedEmailId === email.id}
+                isProcessing={processingEmailIds.has(email.id)}
               />
             ))}
           </DroppableColumn>

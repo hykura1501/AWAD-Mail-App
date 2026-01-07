@@ -1006,15 +1006,31 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		}
 		paginatedIDs := snoozedEmailIDs[start:end]
 
-		// Fetch full email details from Gmail
+		// Fetch full email details from Gmail AND local DB to ensure SnoozedUntil is present
 		var emails []*emaildomain.Email
 		for _, emailID := range paginatedIDs {
+			// 1. Fetch from local DB first to get SnoozedUntil
+			localEmail, _ := u.emailRepo.GetEmailByID(emailID)
+
+			// 2. Fetch from Gmail
 			email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
 			if err != nil {
-				log.Printf("[GetEmailsByStatus] Failed to fetch snoozed email %s: %v", emailID, err)
+				log.Printf("[GetEmailsByStatus] Failed to fetch snoozed email %s from provider: %v", emailID, err)
+				
+				// Fallback to local email if provider fails
+				if localEmail != nil {
+					emails = append(emails, localEmail)
+				}
 				continue
 			}
+			
 			if email != nil {
+				// Enrich with local data if available
+				if localEmail != nil {
+					email.SnoozedUntil = localEmail.SnoozedUntil
+					// Ensure status is consistent
+					email.Status = "snoozed"
+				}
 				emails = append(emails, email)
 			}
 		}

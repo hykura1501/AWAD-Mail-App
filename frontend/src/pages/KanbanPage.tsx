@@ -89,7 +89,6 @@ export default function KanbanPage() {
     reloadAllColumns: reloadAllKanbanColumns,
     moveEmail: handleKanbanDrop,
     updatePage: handleKanbanPage,
-    setKanbanEmails,
     setKanbanColumnConfigs,
     limit,
   } = useKanbanData({
@@ -128,7 +127,16 @@ export default function KanbanPage() {
     openSnoozeDialog,
     closeSnoozeDialog,
     confirmSnooze,
+    snoozingEmailId,
   } = useKanbanSnooze();
+
+  const [unsnoozingEmailIds, setUnsnoozingEmailIds] = useState<Set<string>>(new Set());
+
+  const processingEmailIds = useMemo(() => {
+    const set = new Set(unsnoozingEmailIds);
+    if (snoozingEmailId) set.add(snoozingEmailId);
+    return set;
+  }, [unsnoozingEmailIds, snoozingEmailId]);
 
 
   // Note: kanbanOffsets, loadingColumns, kanbanEmails, limit are now from useKanbanData hook
@@ -354,6 +362,39 @@ export default function KanbanPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [focusedEmailId, kanbanColumns, detailEmailId]);
 
+
+  // Auto-refresh when snooze time expires
+  useEffect(() => {
+    const snoozedEmails = kanbanEmails.snoozed || [];
+    if (snoozedEmails.length === 0) return;
+
+    // Find the soonest expiration time
+    const now = new Date().getTime();
+    let nextExpiration: number | null = null;
+
+    snoozedEmails.forEach(email => {
+      if (email.snoozed_until) {
+        const time = new Date(email.snoozed_until).getTime();
+        if (time > now) {
+          if (nextExpiration === null || time < nextExpiration) {
+            nextExpiration = time;
+          }
+        }
+      }
+    });
+
+    if (nextExpiration) {
+      const delay = Math.max(0, nextExpiration - now) + 1000; // Add 1s buffer
+
+      const timer = setTimeout(() => {
+        console.log(`[Snooze] Timer expired, refreshing columns...`);
+        reloadAllKanbanColumns();
+      }, delay);
+
+      return () => clearTimeout(timer);
+    }
+  }, [kanbanEmails.snoozed, reloadAllKanbanColumns]);
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-[#111418] text-gray-900 dark:text-white overflow-hidden font-sans transition-colors duration-200">
       {/* Header */}
@@ -395,42 +436,27 @@ export default function KanbanPage() {
                   columnId={columnId}
                   onSnooze={openSnoozeDialog}
                   onUnsnooze={async (email) => {
+                    if (unsnoozingEmailIds.has(email.id)) return;
+                    setUnsnoozingEmailIds(prev => new Set(prev).add(email.id));
                     try {
-                      const { targetColumn } = await emailService.unsnoozeEmail(email.id);
-                      setKanbanEmails((prev) => {
-                        let movedEmail: Email | undefined;
-                        const newEmails = Object.fromEntries(
-                          Object.entries(prev).map(([col, emails]) => {
-                            const emailsArray = emails || [];
-                            const filtered = emailsArray.filter((ee) => {
-                              if (ee.id === email.id) {
-                                movedEmail = ee;
-                                return false;
-                              }
-                              return true;
-                            });
-                            return [col, filtered];
-                          })
-                        ) as typeof prev;
-                        if (movedEmail) {
-                          movedEmail.mailbox_id = targetColumn;
-                          if (!newEmails[targetColumn]) {
-                            newEmails[targetColumn] = [];
-                          }
-                          newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
-                        }
-                        return newEmails;
-                      });
-                      loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
-                      loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+                      await emailService.unsnoozeEmail(email.id);
+                      // Refresh all columns to reflect the change (email returns to previous column)
+                      await reloadAllKanbanColumns();
                     } catch (error) {
                       console.error("Error unsnoozing email:", error);
+                    } finally {
+                      setUnsnoozingEmailIds(prev => {
+                        const next = new Set(prev);
+                        next.delete(email.id);
+                        return next;
+                      });
                     }
                   }}
                 />
               )}
               onEmailClick={(emailId) => setDetailEmailId(emailId)}
               highlightedEmailId={highlightedEmailId}
+              processingEmailIds={processingEmailIds}
             />
           </div>
         </div>
@@ -505,37 +531,20 @@ export default function KanbanPage() {
                           onEmailClick={setDetailEmailId}
                           onSnooze={openSnoozeDialog}
                           onUnsnooze={async (email) => {
+                            if (unsnoozingEmailIds.has(email.id)) return;
+                            setUnsnoozingEmailIds(prev => new Set(prev).add(email.id));
                             try {
-                              const { targetColumn } = await emailService.unsnoozeEmail(email.id);
-                              setKanbanEmails((prev) => {
-                                let movedEmail: Email | undefined;
-                                const newEmails = Object.fromEntries(
-                                  Object.entries(prev).map(([col, emails]) => {
-                                    const emailsArray = emails || [];
-                                    const filtered = emailsArray.filter((ee) => {
-                                      if (ee.id === email.id) {
-                                        movedEmail = ee;
-                                        return false;
-                                      }
-                                      return true;
-                                    });
-                                    return [col, filtered];
-                                  })
-                                ) as typeof prev;
-                                if (movedEmail) {
-                                  movedEmail.mailbox_id = targetColumn;
-                                  if (!newEmails[targetColumn]) {
-                                    newEmails[targetColumn] = [];
-                                  }
-                                  newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
-                                }
-                                return newEmails;
-                              });
-                              setMobileSelectedColumn(targetColumn);
-                              loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
-                              loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+                              await emailService.unsnoozeEmail(email.id);
+                              await reloadAllKanbanColumns();
+                              setMobileSelectedColumn("inbox"); // Or stay, but email is gone
                             } catch (error) {
                               console.error("Error unsnoozing email (mobile):", error);
+                            } finally {
+                              setUnsnoozingEmailIds(prev => {
+                                const next = new Set(prev);
+                                next.delete(email.id);
+                                return next;
+                              });
                             }
                           }}
                           onMoveToColumn={handleKanbanDrop}
@@ -627,7 +636,7 @@ export default function KanbanPage() {
       <SnoozeDialog
         open={snoozeDialogOpen}
         onOpenChange={(open) => !open && closeSnoozeDialog()}
-        onConfirm={(snoozeUntil) => confirmSnooze(snoozeUntil, setKanbanEmails)}
+        onConfirm={(snoozeUntil) => confirmSnooze(snoozeUntil)}
         emailSubject={emailToSnooze?.subject}
       />
 
@@ -665,48 +674,27 @@ export default function KanbanPage() {
         onClose={() => setIsSnoozedDrawerOpen(false)}
         emails={kanbanEmails.snoozed || []}
         onUnsnooze={async (emailId) => {
+          if (unsnoozingEmailIds.has(emailId)) return;
+          setUnsnoozingEmailIds(prev => new Set(prev).add(emailId));
           try {
-            // Call API first to get target column
-            const { targetColumn } = await emailService.unsnoozeEmail(emailId);
-
-            // Optimistic update - move to target column
-            setKanbanEmails((prev) => {
-              let movedEmail: Email | undefined;
-              const newEmails = Object.fromEntries(
-                Object.entries(prev).map(([col, emails]) => {
-                  const emailsArray = emails || [];
-                  const filtered = emailsArray.filter((ee) => {
-                    if (ee.id === emailId) {
-                      movedEmail = ee;
-                      return false;
-                    }
-                    return true;
-                  });
-                  return [col, filtered];
-                })
-              ) as typeof prev;
-              if (movedEmail) {
-                movedEmail.mailbox_id = targetColumn;
-                // Initialize target column if it doesn't exist
-                if (!newEmails[targetColumn]) {
-                  newEmails[targetColumn] = [];
-                }
-                newEmails[targetColumn] = [movedEmail, ...newEmails[targetColumn]];
-              }
-              return newEmails;
-            });
-
-            // Refresh target column and snoozed column from server
-            loadKanbanColumn(targetColumn, kanbanOffsets[targetColumn] ?? 0);
-            loadKanbanColumn("snoozed", kanbanOffsets.snoozed);
+            await emailService.unsnoozeEmail(emailId);
+            // Refresh all columns
+            await reloadAllKanbanColumns();
           } catch (error) {
             console.error("Error unsnoozing email:", error);
+          } finally {
+            setUnsnoozingEmailIds(prev => {
+              const next = new Set(prev);
+              next.delete(emailId);
+              return next;
+            });
           }
         }}
         onEmailClick={(emailId) => setDetailEmailId(emailId)}
         offset={kanbanOffsets.snoozed}
         limit={limit}
         onPageChange={(dir) => handleKanbanPage("snoozed", dir)}
+        processingEmailIds={processingEmailIds}
       />
 
       {/* Task Drawer */}

@@ -16,25 +16,25 @@ interface SnoozedDrawerProps {
 // Format snooze expiration time in a user-friendly way
 function formatSnoozeTime(snoozedUntil: string | undefined): string | null {
   if (!snoozedUntil) return null;
-  
+
   const snoozeDate = new Date(snoozedUntil);
   const now = new Date();
-  
+
   // If snooze time has passed, don't show anything
   if (snoozeDate <= now) return null;
-  
+
   const diffMs = snoozeDate.getTime() - now.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  
+
   // Format time
-  const timeStr = snoozeDate.toLocaleTimeString("vi-VN", { 
-    hour: "2-digit", 
+  const timeStr = snoozeDate.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
     minute: "2-digit",
-    hour12: false 
+    hour12: false
   });
-  
+
   if (diffDays === 0) {
     if (diffHours < 1) {
       return `Trở lại trong ${diffMins} phút`;
@@ -60,24 +60,23 @@ export default function SnoozedDrawer({
   offset = 0,
   limit = 20,
   onPageChange,
-}: SnoozedDrawerProps) {
+  processingEmailIds = new Set(),
+}: SnoozedDrawerProps & { processingEmailIds?: Set<string> }) {
   const currentPage = Math.floor(offset / limit) + 1;
 
   return (
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/30 backdrop-blur-sm z-40 transition-opacity duration-300 ${
-          isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-        }`}
+        className={`fixed inset-0 bg-black/30 backdrop-blur-sm z-40 transition-opacity duration-300 ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
         onClick={onClose}
       />
 
       {/* Drawer */}
       <div
-        className={`fixed top-0 right-0 h-full w-full max-w-md bg-white dark:bg-[#1A1D21] shadow-2xl z-50 transform transition-transform duration-300 ease-out ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={`fixed top-0 right-0 h-full w-full max-w-md bg-white dark:bg-[#1A1D21] shadow-2xl z-50 transform transition-transform duration-300 ease-out ${isOpen ? "translate-x-0" : "translate-x-full"
+          }`}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
@@ -112,51 +111,66 @@ export default function SnoozedDrawer({
               </p>
             </div>
           ) : (
-            emails.map((email) => (
-              <div
-                key={email.id}
-                className="group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm transition-all duration-200 bg-gray-50 dark:bg-[#0f1724] border-gray-100 dark:border-gray-800 hover:shadow-md hover:border-orange-200 dark:hover:border-orange-900/30 cursor-pointer"
-                onClick={() => onEmailClick?.(email.id)}
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate flex-1">
-                    {getSenderName(email)}
+            emails.map((email) => {
+              const isProcessing = processingEmailIds.has(email.id);
+              return (
+                <div
+                  key={email.id}
+                  className={`
+                    group relative flex flex-col gap-2 rounded-xl border p-4 shadow-sm transition-all duration-200 
+                    bg-gray-50 dark:bg-[#0f1724] border-gray-100 dark:border-gray-800 
+                    hover:shadow-md hover:border-orange-200 dark:hover:border-orange-900/30 cursor-pointer
+                    ${isProcessing ? "opacity-70 pointer-events-none grayscale-[0.5]" : ""}
+                  `}
+                  onClick={() => !isProcessing && onEmailClick?.(email.id)}
+                >
+                  {isProcessing && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 dark:bg-black/20 rounded-xl backdrop-blur-[1px]">
+                      <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin shadow-sm" />
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate flex-1">
+                      {getSenderName(email)}
+                    </div>
+                    <div className="text-[10px] text-gray-400 font-medium whitespace-nowrap shrink-0">
+                      {new Date(email.received_at).toLocaleDateString()}
+                    </div>
                   </div>
-                  <div className="text-[10px] text-gray-400 font-medium whitespace-nowrap shrink-0">
-                    {new Date(email.received_at).toLocaleDateString()}
+
+                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
+                    {email.subject}
+                  </div>
+
+                  <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
+                    {getCleanPreview(email.preview || email.body, 80)}
+                  </div>
+
+                  {/* Snooze Time Display */}
+                  {formatSnoozeTime(email.snoozed_until) && (
+                    <div className="flex items-center gap-1.5 mt-1 text-[11px] text-orange-600 dark:text-orange-400">
+                      <Clock className="w-3 h-3" />
+                      <span>{formatSnoozeTime(email.snoozed_until)}</span>
+                    </div>
+                  )}
+
+                  {/* Unsnooze Button */}
+                  <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUnsnooze(email.id);
+                      }}
+                      disabled={isProcessing}
+                      className="w-full py-1.5 px-3 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors disabled:opacity-50"
+                    >
+                      {isProcessing ? "Loading..." : "Unsnooze"}
+                    </button>
                   </div>
                 </div>
-
-                <div className="text-sm font-medium text-gray-800 dark:text-gray-200 leading-tight">
-                  {email.subject}
-                </div>
-
-                <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed">
-                  {getCleanPreview(email.preview || email.body, 80)}
-                </div>
-
-                {/* Snooze Time Display */}
-                {formatSnoozeTime(email.snoozed_until) && (
-                  <div className="flex items-center gap-1.5 mt-1 text-[11px] text-orange-600 dark:text-orange-400">
-                    <Clock className="w-3 h-3" />
-                    <span>{formatSnoozeTime(email.snoozed_until)}</span>
-                  </div>
-                )}
-
-                {/* Unsnooze Button */}
-                <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onUnsnooze(email.id);
-                    }}
-                    className="w-full py-1.5 px-3 rounded-lg text-xs font-medium bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors"
-                  >
-                    Unsnooze
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
