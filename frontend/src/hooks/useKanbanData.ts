@@ -17,6 +17,7 @@ export interface UseKanbanDataOptions {
 export interface UseKanbanDataReturn {
   // Data
   kanbanEmails: Record<string, Email[]>;
+  kanbanTotals: Record<string, number>;
   kanbanOffsets: Record<string, number>;
   kanbanColumnConfigs: KanbanColumnConfig[];
   mailboxes: Mailbox[];
@@ -88,8 +89,9 @@ export function useKanbanData({
   });
 
   // 5. Derive kanbanEmails and loading states
-  const { kanbanEmails, loadingColumns, isAnyLoading } = useMemo(() => {
+  const { kanbanEmails, kanbanTotals, loadingColumns, isAnyLoading } = useMemo(() => {
     const emails: Record<string, Email[]> = {};
+    const totals: Record<string, number> = {};
     const loading: Record<string, boolean> = {};
     let anyLoading = false;
 
@@ -97,11 +99,12 @@ export function useKanbanData({
       const query = emailQueries[index];
       // Note: query.data is { emails: Email[], total: number }
       emails[colId] = query.data?.emails || [];
+      totals[colId] = query.data?.total || 0;
       loading[colId] = query.isLoading;
       if (query.isLoading) anyLoading = true;
     });
 
-    return { kanbanEmails: emails, loadingColumns: loading, isAnyLoading: anyLoading };
+    return { kanbanEmails: emails, kanbanTotals: totals, loadingColumns: loading, isAnyLoading: anyLoading };
   }, [allColumnIds, emailQueries]);
 
   // 6. Trigger onInitComplete when data is fully loaded for the first time
@@ -182,6 +185,7 @@ export function useKanbanData({
 
   return {
     kanbanEmails,
+    kanbanTotals,
     kanbanOffsets,
     kanbanColumnConfigs,
     mailboxes,

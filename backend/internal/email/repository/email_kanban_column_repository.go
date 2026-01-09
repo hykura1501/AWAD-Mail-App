@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"time"
 
 	emaildomain "ga03-backend/internal/email/domain"
 
@@ -78,7 +79,7 @@ func (r *emailKanbanColumnRepository) RemoveEmailColumnMapping(userID, emailID, 
 }
 
 // SnoozeEmailToColumn moves email to snoozed column and saves previous column
-func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previousColumnID string) error {
+func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previousColumnID string, snoozedUntil time.Time) error {
 	var count int64
 	r.db.Model(&emaildomain.EmailKanbanColumn{}).Where("user_id = ? AND email_id = ?", userID, emailID).Count(&count)
 
@@ -90,6 +91,7 @@ func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previ
 			EmailID:          emailID,
 			ColumnID:         "snoozed",
 			PreviousColumnID: previousColumnID,
+			SnoozedUntil:     &snoozedUntil,
 		}
 		return r.db.Create(&mapping).Error
 	}
@@ -100,6 +102,7 @@ func (r *emailKanbanColumnRepository) SnoozeEmailToColumn(userID, emailID, previ
 		Updates(map[string]interface{}{
 			"column_id":          "snoozed",
 			"previous_column_id": previousColumnID,
+			"snoozed_until":      snoozedUntil,
 		}).Error
 }
 
@@ -137,6 +140,7 @@ func (r *emailKanbanColumnRepository) GetAllSnoozedMappings() ([]SnoozedEmailMap
 			UserID:           m.UserID,
 			EmailID:          m.EmailID,
 			PreviousColumnID: prevCol,
+			SnoozedUntil:     m.SnoozedUntil,
 		}
 	}
 	return result, nil

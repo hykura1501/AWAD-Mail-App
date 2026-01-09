@@ -81,6 +81,7 @@ export default function KanbanPage() {
   // Pass queueSummaries to onInitComplete to auto-summarize emails when page loads
   const {
     kanbanEmails,
+    kanbanTotals,
     kanbanOffsets,
     kanbanColumnConfigs,
     mailboxes,
@@ -406,7 +407,7 @@ export default function KanbanPage() {
         onSortChange={setSortBy}
         filters={filters}
         onFilterChange={setFilters}
-        snoozedCount={kanbanEmails.snoozed?.length || 0}
+        snoozedCount={kanbanTotals.snoozed || 0}
         onSnoozedClick={() => setIsSnoozedDrawerOpen(true)}
         onSearchClick={() => setIsSearchModalOpen(true)}
         onSettingsClick={() => setIsSettingsOpen(true)}
@@ -693,6 +694,7 @@ export default function KanbanPage() {
         onEmailClick={(emailId) => setDetailEmailId(emailId)}
         offset={kanbanOffsets.snoozed}
         limit={limit}
+        totalCount={kanbanTotals.snoozed}
         onPageChange={(dir) => handleKanbanPage("snoozed", dir)}
         processingEmailIds={processingEmailIds}
       />
