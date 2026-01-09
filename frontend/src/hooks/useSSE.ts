@@ -80,10 +80,10 @@ export function useSSE({
   handlers = {},
 }: UseSSEOptions = {}): UseSSEReturn {
   const queryClient = useQueryClient();
-  
+
   // Use state for isConnected so component re-renders on connection change
   const [isConnected, setIsConnected] = useState(false);
-  
+
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastMutationTimeRef = useRef(0);
   const reconnectAttemptsRef = useRef(0);
@@ -120,7 +120,7 @@ export function useSSE({
     if (!token) return;
 
     const sseUrl = `${API_BASE_URL}/events?token=${token}`;
-    
+
     const eventSource = new EventSource(sseUrl, {
       withCredentials: true,
     });
@@ -157,11 +157,9 @@ export function useSSE({
           // Invalidate React Query caches
           queryClient.invalidateQueries({
             queryKey: [QUERY_KEYS.EMAILS],
-            refetchType: "none",
           });
           queryClient.invalidateQueries({
             queryKey: [QUERY_KEYS.MAILBOXES],
-            refetchType: "none",
           });
         }
       } catch (error) {
@@ -176,18 +174,18 @@ export function useSSE({
       console.error("[SSE] Connection error:", error);
       setIsConnected(false);
       handlersRef.current.onError?.(error);
-      
+
       // Close current connection
       eventSource.close();
       eventSourceRef.current = null;
-      
+
       // Attempt reconnection with exponential backoff
       if (reconnectAttemptsRef.current < maxReconnectAttempts) {
         const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current);
         reconnectAttemptsRef.current++;
-        
+
         console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
-        
+
         reconnectTimeoutRef.current = setTimeout(() => {
           connect();
         }, delay);
