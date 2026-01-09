@@ -128,6 +128,28 @@ func (r *emailRepository) initMockEmails() {
 		default:
 			mailboxID = "snoozed"
 			status = "snoozed"
+			// Set snooze time to 1 minute from now for testing unsnooze
+			snoozeTime := now.Add(1 * time.Minute)
+			email := &emaildomain.Email{
+				ID:           uuid.New().String(),
+				MailboxID:    mailboxID,
+				Status:       status,
+				From:         sender.email,
+				FromName:     sender.name,
+				To:           []string{"user@example.com"},
+				Subject:      subject + fmt.Sprintf(" #%d", i+1),
+				Preview:      preview,
+				Body:         fmt.Sprintf("<p>%s</p><p>This is email #%d in your %s.</p>", preview, i+1, mailboxID),
+				IsHTML:       true,
+				IsRead:       i%3 == 0,
+				IsStarred:    i%5 == 0,
+				IsImportant:  i%7 == 0,
+				ReceivedAt:   now.Add(-time.Duration(i) * time.Hour),
+				CreatedAt:    now.Add(-time.Duration(i) * time.Hour),
+				SnoozedUntil: &snoozeTime,
+			}
+			emails = append(emails, email)
+			continue // Skip the default append below
 		}
 
 		emails = append(emails, &emaildomain.Email{

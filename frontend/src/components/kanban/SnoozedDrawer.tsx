@@ -11,6 +11,7 @@ interface SnoozedDrawerProps {
   offset?: number;
   limit?: number;
   onPageChange?: (dir: 1 | -1) => void;
+  totalCount?: number;
 }
 
 // Format snooze expiration time in a user-friendly way
@@ -61,8 +62,10 @@ export default function SnoozedDrawer({
   limit = 20,
   onPageChange,
   processingEmailIds = new Set(),
+  totalCount,
 }: SnoozedDrawerProps & { processingEmailIds?: Set<string> }) {
   const currentPage = Math.floor(offset / limit) + 1;
+  const count = totalCount ?? emails.length;
 
   return (
     <>
@@ -89,7 +92,7 @@ export default function SnoozedDrawer({
                 Snoozed
               </h2>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {emails.length} email đang tạm ẩn
+                {count} email đang tạm ẩn
               </p>
             </div>
           </div>

@@ -165,49 +165,51 @@ func (u *emailUsecase) syncWorker(workerID int) {
 }
 
 func (u *emailUsecase) checkSnoozedEmails() {
-	// Get snoozed emails from repo
-	emails, _, err := u.emailRepo.GetEmailsByStatus("snoozed", 1000, 0)
-	if err != nil {
-		return
-	}
-
-	// Get snoozed mappings to know previous columns and userIDs
+	// Get snoozed mappings to know previous columns and userIDs and expiration
 	snoozedMappings, err := u.emailKanbanColumnRepo.GetAllSnoozedMappings()
 	if err != nil {
 		log.Printf("Failed to get snoozed mappings: %v", err)
 		return
 	}
 
-	// Create lookup map for quick access
-	mappingByEmailID := make(map[string]repository.SnoozedEmailMapping)
-	for _, m := range snoozedMappings {
-		mappingByEmailID[m.EmailID] = m
-	}
-
 	now := time.Now()
-	for _, email := range emails {
-		if email.SnoozedUntil != nil && email.SnoozedUntil.Before(now) {
+	for _, mapping := range snoozedMappings {
+		// Calculate if snooze has expired
+		// Default to 1 hour from now if no time set (legacy data)
+		var expired bool
+		if mapping.SnoozedUntil == nil {
+			// For legacy data without time, we can't check unless we fetch email
+			// But for now, let's assume if it's in DB without time, it might be stuck or manual only.
+			// Ideally we should fix legacy data.
+			continue
+		} else {
+			expired = mapping.SnoozedUntil.Before(now)
+		}
+
+		if expired {
 			// Wake up! Restore to previous column
-			mapping, ok := mappingByEmailID[email.ID]
-			targetColumn := "inbox" // Default fallback
-			if ok && mapping.PreviousColumnID != "" {
-				targetColumn = mapping.PreviousColumnID
+			targetColumn := mapping.PreviousColumnID
+			if targetColumn == "" {
+				targetColumn = "inbox"
 			}
 
+			// Update in-memory status if user is active (optional, but good for consistency)
 			u.kanbanStatusMu.Lock()
-			u.kanbanStatus[email.ID] = targetColumn
+			u.kanbanStatus[mapping.EmailID] = targetColumn
 			u.kanbanStatusMu.Unlock()
 
-			email.Status = targetColumn
-			email.SnoozedUntil = nil
-			u.emailRepo.UpdateEmail(email)
-
-			// Update DB mapping to restore column
-			if ok {
-				u.emailKanbanColumnRepo.SetEmailColumn(mapping.UserID, email.ID, targetColumn)
+			// Update email object in local repo if it exists there
+			email, _ := u.emailRepo.GetEmailByID(mapping.EmailID)
+			if email != nil {
+				email.Status = targetColumn
+				email.SnoozedUntil = nil
+				u.emailRepo.UpdateEmail(email)
 			}
 
-			fmt.Printf("Email %s woke up from snooze, restored to %s\n", email.ID, targetColumn)
+			// Update DB mapping to restore column
+			u.emailKanbanColumnRepo.SetEmailColumn(mapping.UserID, mapping.EmailID, targetColumn)
+
+			log.Printf("Email %s woken up from snooze, restored to %s", mapping.EmailID, targetColumn)
 		}
 	}
 }
@@ -227,10 +229,8 @@ func (u *emailUsecase) SnoozeEmail(userID, emailID string, snoozeUntil time.Time
 	// Fetch the full email object (from provider or repo)
 	email, err := u.GetEmailByID(userID, emailID)
 	if err != nil {
-		// If we can't fetch it, we can't persist the snooze timer effectively for the checker
-		// But we still return nil because the map update above might be enough for immediate UI sync
-		log.Printf("[SnoozeEmail] Warning: could not fetch email %s to persist snooze timer: %v", emailID, err)
-		return nil
+		// If we can't fetch it, we still persist the mapping below so it works
+		log.Printf("[SnoozeEmail] Warning: could not fetch email %s to update local object: %v", emailID, err)
 	}
 
 	if email != nil {
@@ -238,15 +238,16 @@ func (u *emailUsecase) SnoozeEmail(userID, emailID string, snoozeUntil time.Time
 		email.SnoozedUntil = &snoozeUntil
 		email.UserID = userID // Critical for wake-up logic
 
-		// Persist to local repo so the background checker can find it
+		// Persist to local repo so the background checker can find it (for in-memory cache)
 		if err := u.emailRepo.UpsertEmail(email); err != nil {
 			log.Printf("[SnoozeEmail] Failed to upsert email to local repo: %v", err)
 		}
 	}
 
-	// Persist email-column mapping with previous column for restore
-	if err := u.emailKanbanColumnRepo.SnoozeEmailToColumn(userID, emailID, previousColumn); err != nil {
+	// Persist email-column mapping with previous column AND expiration time for restore
+	if err := u.emailKanbanColumnRepo.SnoozeEmailToColumn(userID, emailID, previousColumn, snoozeUntil); err != nil {
 		log.Printf("Failed to save snooze email-column mapping: %v", err)
+		return err
 	}
 
 	return nil

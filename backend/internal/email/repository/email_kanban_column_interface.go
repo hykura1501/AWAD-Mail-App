@@ -1,12 +1,14 @@
 package repository
 
+import "time"
+
 // EmailKanbanColumnRepository defines the interface for email-kanban column mapping repository
 type EmailKanbanColumnRepository interface {
 	// SetEmailColumn sets the column for an email (creates or updates)
 	SetEmailColumn(userID, emailID, columnID string) error
 	
 	// SnoozeEmailToColumn moves email to snoozed column and saves previous column
-	SnoozeEmailToColumn(userID, emailID, previousColumnID string) error
+	SnoozeEmailToColumn(userID, emailID, previousColumnID string, snoozedUntil time.Time) error
 	
 	// GetPreviousColumn gets the previous column ID for a snoozed email
 	GetPreviousColumn(userID, emailID string) (string, error)
@@ -32,4 +34,5 @@ type SnoozedEmailMapping struct {
 	UserID           string
 	EmailID          string
 	PreviousColumnID string
+	SnoozedUntil     *time.Time
 }
