@@ -129,7 +129,7 @@ export default function SearchModal({
               isSearching={isLoading}
               placeholder="Tìm kiếm email..."
               className="w-full"
-              disableSuggestions={false}
+              disableSuggestions={true}
               searchMode={searchMode}
               onSearchModeChange={setSearchMode}
             />

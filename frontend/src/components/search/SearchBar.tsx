@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, X, ChevronDown } from "lucide-react";
+import { Search, X, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emailService } from "@/services/email.service";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -86,7 +86,7 @@ export default function SearchBar({
       try {
         // 1. Get local suggestions from IndexedDB (instant)
         const localSuggestions = await getLocalSuggestions(trimmedQuery, 5);
-        
+
         if (!isCancelled && localSuggestions.length > 0) {
           // Show local suggestions immediately
           setSuggestions(localSuggestions);
@@ -97,19 +97,19 @@ export default function SearchBar({
         // 2. Also fetch from backend API (async, may take longer)
         try {
           const apiSuggestions = await emailService.getSearchSuggestions(trimmedQuery);
-          
+
           if (!isCancelled) {
             // Merge and dedupe: local first, then API
             const merged = [...localSuggestions];
             const seen = new Set(localSuggestions.map(s => s.toLowerCase()));
-            
+
             for (const suggestion of apiSuggestions) {
               if (!seen.has(suggestion.toLowerCase())) {
                 merged.push(suggestion);
                 seen.add(suggestion.toLowerCase());
               }
             }
-            
+
             // Limit to 7 suggestions total
             const finalSuggestions = merged.slice(0, 7);
             setSuggestions(finalSuggestions);
@@ -251,17 +251,17 @@ export default function SearchBar({
     }
 
     const textLower = text.toLowerCase();
-    
+
     // Find all matches and their positions (allow substring matches, not just whole words)
     const matches: Array<{ start: number; end: number }> = [];
     queryWords.forEach((word) => {
       if (word.length === 0) return;
-      
+
       let startIndex = 0;
       while (startIndex < textLower.length) {
         const index = textLower.indexOf(word, startIndex);
         if (index === -1) break;
-        
+
         // Allow substring matches (like "local" in "LocalStack")
         matches.push({ start: index, end: index + word.length });
         startIndex = index + 1;
@@ -327,7 +327,11 @@ export default function SearchBar({
       <div className="flex items-center gap-1">
         {/* Search Input */}
         <form onSubmit={handleSubmit} className="relative flex-1 flex items-center">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+          {isSearching ? (
+            <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500 animate-spin z-10" />
+          ) : (
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+          )}
           <input
             ref={inputRef}
             type="text"
@@ -340,7 +344,6 @@ export default function SearchBar({
               }
             }}
             placeholder={placeholder}
-            disabled={isSearching}
             className={cn(
               "w-full pl-10 pr-10 py-2 rounded-l-full",
               "bg-gray-100 dark:bg-gray-800",
@@ -446,7 +449,7 @@ export default function SearchBar({
                 "hover:bg-gray-100 dark:hover:bg-gray-700",
                 "transition-colors",
                 selectedIndex === index &&
-                  "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
               )}
             >
               {highlightText(suggestion, debouncedQuery)}

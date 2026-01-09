@@ -84,6 +84,9 @@ func main() {
 	// This will sync all emails after login/registration
 	authUsecaseInstance.SetEmailSyncCallback(emailUsecaseInstance.SyncAllEmailsForUser)
 
+	// Set EventService (SSE) for email usecase to enable real-time updates
+	emailUsecaseInstance.SetEventService(sseManager)
+
 	// Initialize Notification Service (Pub/Sub)
 	// Only start if project ID is configured
 	if cfg.GoogleProjectID != "" {

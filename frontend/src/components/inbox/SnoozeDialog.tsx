@@ -95,7 +95,7 @@ export function SnoozeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="!sm:max-w-[30vw]">
         <DialogHeader>
           <DialogTitle>Snooze Email</DialogTitle>
           <DialogDescription>

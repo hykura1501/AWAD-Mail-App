@@ -210,6 +210,15 @@ func (u *emailUsecase) checkSnoozedEmails() {
 			u.emailKanbanColumnRepo.SetEmailColumn(mapping.UserID, mapping.EmailID, targetColumn)
 
 			log.Printf("Email %s woken up from snooze, restored to %s", mapping.EmailID, targetColumn)
+
+			// Notify user via SSE to refresh UI
+			if u.eventService != nil {
+				u.eventService.SendToUser(mapping.UserID, "email_update", map[string]string{
+					"email_id": mapping.EmailID,
+					"action":   "unsnooze",
+					"column":   targetColumn,
+				})
+			}
 		}
 	}
 }
