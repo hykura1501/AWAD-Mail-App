@@ -86,7 +86,7 @@ func (u *emailUsecase) SemanticSearch(userID, query string, limit, offset int) (
 		"emails", // collection name
 		userID,
 		query,
-		limit+offset+50, // Fetch more to account for distance filtering
+		300, // Fetch fixed top 300 (Chroma quota limit) to ensure stable total count
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("semantic search failed: %w", err)
