@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setUser, logout } from "@/store/authSlice";
+import { setUser } from "@/store/authSlice";
 import { authService } from "@/services/auth.service";
 import { useQuery } from "@tanstack/react-query";
 import { getAccessToken, setAccessToken } from "@/lib/api-client";
-import  LoadingIcon  from "@/assets/loading.svg?react";
+import LoadingIcon from "@/assets/loading.svg?react";
+import AuthSync from "@/components/common/AuthSync";
 
 interface PrivateRouteProps {
     children: React.ReactNode;
@@ -24,18 +25,7 @@ export const PrivateRoute = ({ children }: PrivateRouteProps) => {
             ? ((localStorage.getItem("theme") as "light" | "dark") || "light")
             : "light";
 
-    // Listen for logout
-    useEffect(() => {
-        const channel = new BroadcastChannel("auth_channel");
-        channel.onmessage = (event) => {
-            if (event.data.type === "LOGOUT") {
-                dispatch(logout());
-                setAccessToken(null);
-                window.location.href = "/login";
-            }
-        };
-        return () => channel.close();
-    }, [dispatch]);
+
 
     useEffect(() => {
         let isMounted = true;
@@ -106,5 +96,10 @@ export const PrivateRoute = ({ children }: PrivateRouteProps) => {
         );
     }
 
-    return <>{children}</>;
+    return (
+        <>
+            <AuthSync />
+            {children}
+        </>
+    );
 };

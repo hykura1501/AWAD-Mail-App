@@ -61,7 +61,7 @@ func NewHandler(authUc authUsecase.AuthUsecase, emailUc emailUsecasePkg.EmailUse
 
 	// Set AI service vào emailUsecase qua interface
 	if aiService != nil {
-		emailUc.SetGeminiService(aiService)
+		emailUc.SetAIService(aiService)
 	}
 
 	// Initialize Chroma client for vector search

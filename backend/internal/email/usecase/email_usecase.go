@@ -6,6 +6,7 @@ import (
 	authrepo "ga03-backend/internal/auth/repository"
 	emaildomain "ga03-backend/internal/email/domain"
 	"ga03-backend/internal/email/repository"
+	"ga03-backend/pkg/ai"
 	"ga03-backend/pkg/config"
 	"ga03-backend/pkg/fuzzy"
 	"ga03-backend/pkg/imap"
@@ -36,10 +37,8 @@ type emailUsecase struct {
 	imapProvider          *imap.IMAPService        // IMAP Provider
 	config                *config.Config
 	topicName             string
-	geminiService         interface {
-		SummarizeEmail(ctx context.Context, emailText string) (string, error)
-	}
-	kanbanStatus        map[string]string // emailID -> status
+	aiService             ai.SummarizerService
+	kanbanStatus          map[string]string // emailID -> status
 	kanbanStatusMu      sync.RWMutex      // Mutex to protect kanbanStatus map
 	vectorSearchService VectorSearchService
 	syncJobQueue        chan EmailSyncJob // Job queue for email sync workers
@@ -67,11 +66,9 @@ type EmailSyncJob struct {
 	Body    string
 }
 
-// SetGeminiService allows wiring GeminiService after creation
-func (u *emailUsecase) SetGeminiService(svc interface {
-	SummarizeEmail(ctx context.Context, emailText string) (string, error)
-}) {
-	u.geminiService = svc
+// SetAIService allows wiring AI Service after creation
+func (u *emailUsecase) SetAIService(svc ai.SummarizerService) {
+	u.aiService = svc
 }
 
 // SetVectorSearchService allows wiring VectorSearchService after creation
@@ -92,7 +89,7 @@ func NewEmailUsecase(emailRepo repository.EmailRepository, emailSyncHistoryRepo 
 		imapProvider:          imapProvider,
 		config:                cfg,
 		topicName:             topicName,
-		geminiService:         nil, // cần set sau
+		aiService:             nil, // cần set sau
 		kanbanStatus:          make(map[string]string),
 		syncJobQueue:          make(chan EmailSyncJob, 1000), // Buffered channel for jobs
 		suggestionCache:       make(map[string]map[string]struct{}),
@@ -338,11 +335,11 @@ func (u *emailUsecase) SummarizeEmail(ctx context.Context, emailID string) (stri
 	if err != nil || email == nil {
 		return "", fmt.Errorf("email not found")
 	}
-	if u.geminiService == nil {
-		return "", fmt.Errorf("gemini service not configured")
+	if u.aiService == nil {
+		return "", fmt.Errorf("AI service not configured")
 	}
 	prompt := "Hãy tóm tắt nội dung email sau bằng tiếng Việt, chỉ nêu ý chính, không thêm nhận xét cá nhân: " + email.Body
-	return u.geminiService.SummarizeEmail(ctx, prompt)
+	return u.aiService.SummarizeEmail(ctx, prompt)
 }
 
 func (u *emailUsecase) getUserTokens(userID string) (string, string, error) {

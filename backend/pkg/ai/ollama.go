@@ -255,3 +255,101 @@ func parseRelativeDate(dateStr string) *time.Time {
 	return nil
 }
 
+// GenerateSynonyms generates synonyms for a query using Ollama
+func (o *OllamaService) GenerateSynonyms(ctx context.Context, word string) ([]string, error) {
+	url := o.getBaseURL() + "/api/generate"
+
+	prompt := fmt.Sprintf(`Tìm các "RELATED CONCEPTS" (khái niệm liên quan), "SPECIFIC EXAMPLES" (ví dụ cụ thể), và "DOMAIN TERMS" (thuật ngữ chuyên ngành) cho từ khóa sau trong ngữ cảnh EMAIL CÔNG VIỆC: "%s"
+	
+	Mục tiêu: Mở rộng tìm kiếm sang các từ khóa mà không nhất thiết phải đồng nghĩa hoàn toàn, nhưng có liên quan mật thiết về mặt ngữ nghĩa/ngữ cảnh.
+	
+	Ví dụ:
+	- Input "money" -> Output: ["invoice", "salary", "payment", "transaction", "billing", "cost", "chuyển khoản", "lương", "hóa đơn", "chi phí"]
+	
+	Yêu cầu:
+	1. Trả về kết quả dưới dạng JSON Array các string.
+	2. Bao gồm cả tiếng Anh và tiếng Việt nếu phù hợp.
+	3. CHỈ trả về JSON Array, không thêm text khác.
+	4. Tối đa 15 từ quan trọng nhất.`, word)
+
+	payload := map[string]interface{}{
+		"model":  o.getModel(),
+		"prompt": prompt,
+		"stream": false,
+		"options": map[string]interface{}{
+			"temperature": 0.2, // Lower temperature for more consistent results
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ollama request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama API error (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Response string `json:"response"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Extract JSON from response
+	responseText := strings.TrimSpace(result.Response)
+	// Clean up markdown code blocks if present
+	if strings.HasPrefix(responseText, "```json") {
+		responseText = strings.TrimPrefix(responseText, "```json")
+		responseText = strings.TrimSuffix(responseText, "```")
+	} else if strings.HasPrefix(responseText, "```") {
+		responseText = strings.TrimPrefix(responseText, "```")
+		responseText = strings.TrimSuffix(responseText, "```")
+	}
+	responseText = strings.TrimSpace(responseText)
+
+	jsonStart := strings.Index(responseText, "[")
+	jsonEnd := strings.LastIndex(responseText, "]")
+	if jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart {
+		responseText = responseText[jsonStart : jsonEnd+1]
+	}
+
+	var synonyms []string
+	if err := json.Unmarshal([]byte(responseText), &synonyms); err != nil {
+		// If JSON parse fails, try fallback similar to Gemini implementation
+		lines := strings.Split(responseText, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			line = strings.TrimPrefix(line, "- ")
+			line = strings.TrimPrefix(line, "* ")
+			if line != "" {
+				synonyms = append(synonyms, line)
+			}
+		}
+		if len(synonyms) == 0 {
+			return nil, fmt.Errorf("failed to parse synonyms: %v", err)
+		}
+	}
+
+	return synonyms, nil
+}
+

@@ -38,6 +38,9 @@ export function useAccountActions() {
     mutationFn: authService.logout,
     onSuccess: () => {
       dispatch(logout());
+      const channel = new BroadcastChannel("auth_sync_channel");
+      channel.postMessage({ type: "LOGOUT" });
+      setTimeout(() => channel.close(), 100);
       queryClient.clear();
       navigate("/login");
     },
@@ -68,16 +71,16 @@ export function useAccountActions() {
   return {
     // User state
     user,
-    
+
     // Theme
     theme,
     toggleTheme,
     isDark,
-    
+
     // Logout
     handleLogout,
     isLoggingOut: logoutMutation.isPending,
-    
+
     // Navigation
     navigateToTasks,
     navigateToSettings,
