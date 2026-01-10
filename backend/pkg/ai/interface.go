@@ -18,6 +18,7 @@ type TaskExtraction struct {
 type SummarizerService interface {
 	SummarizeEmail(ctx context.Context, emailText string) (string, error)
 	ExtractTasksFromEmail(ctx context.Context, emailText string) ([]TaskExtraction, error)
+	GenerateSynonyms(ctx context.Context, word string) ([]string, error)
 }
 
 // ProviderType represents the AI provider type

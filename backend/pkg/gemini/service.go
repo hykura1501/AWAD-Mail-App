@@ -280,3 +280,103 @@ func parseRelativeDate(dateStr string) *time.Time {
 	return nil
 }
 
+// GenerateSynonyms generates synonyms and related terms for a query
+func (g *GeminiService) GenerateSynonyms(ctx context.Context, word string) ([]string, error) {
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + g.ApiKey
+
+	prompt := fmt.Sprintf(`Tìm các "RELATED CONCEPTS" (khái niệm liên quan), "SPECIFIC EXAMPLES" (ví dụ cụ thể), và "DOMAIN TERMS" (thuật ngữ chuyên ngành) cho từ khóa sau trong ngữ cảnh EMAIL CÔNG VIỆC: "%s"
+	
+	Mục tiêu: Mở rộng tìm kiếm sang các từ khóa mà không nhất thiết phải đồng nghĩa hoàn toàn, nhưng có liên quan mật thiết về mặt ngữ nghĩa/ngữ cảnh.
+	
+	Ví dụ:
+	- Input "money" -> Output: ["invoice", "salary", "payment", "transaction", "billing", "cost", "chuyển khoản", "lương", "hóa đơn", "chi phí"]
+	- Input "meeting" -> Output: ["schedule", "calendar", "call", "zoom", "google meet", "agenda", "minues", "lịch họp", "phòng họp"]
+	
+	Yêu cầu:
+	1. Trả về kết quả dưới dạng JSON Array các string.
+	2. Bao gồm cả tiếng Anh và tiếng Việt nếu phù hợp.
+	3. CHỈ trả về JSON Array, không thêm text khác.
+	4. Tối đa 15 từ quan trọng nhất.`, word)
+
+	payload := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{"parts": []map[string]string{{"text": prompt}}},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gemini API error: %s", string(respBody))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var responseText string
+	if c, ok := result["candidates"].([]interface{}); ok && len(c) > 0 {
+		if cand, ok := c[0].(map[string]interface{}); ok {
+			if content, ok := cand["content"].(map[string]interface{}); ok {
+				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
+					if part, ok := parts[0].(map[string]interface{}); ok {
+						if text, ok := part["text"].(string); ok {
+							responseText = text
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if responseText == "" {
+		return nil, fmt.Errorf("no response from AI")
+	}
+
+	// Clean up markdown code blocks if present
+	responseText = strings.TrimSpace(responseText)
+	if strings.HasPrefix(responseText, "```json") {
+		responseText = strings.TrimPrefix(responseText, "```json")
+		responseText = strings.TrimSuffix(responseText, "```")
+	} else if strings.HasPrefix(responseText, "```") {
+		responseText = strings.TrimPrefix(responseText, "```")
+		responseText = strings.TrimSuffix(responseText, "```")
+	}
+	responseText = strings.TrimSpace(responseText)
+
+	var synonyms []string
+	if err := json.Unmarshal([]byte(responseText), &synonyms); err != nil {
+		// If JSON parse fails, try to split by comma or newlines as fallback
+		lines := strings.Split(responseText, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			line = strings.TrimPrefix(line, "- ")
+			line = strings.TrimPrefix(line, "* ")
+			if line != "" {
+				synonyms = append(synonyms, line)
+			}
+		}
+		if len(synonyms) == 0 {
+			return nil, fmt.Errorf("failed to parse synonyms: %v", err)
+		}
+	}
+
+	return synonyms, nil
+}
+

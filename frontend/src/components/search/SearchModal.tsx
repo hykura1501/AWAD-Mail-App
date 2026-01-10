@@ -62,8 +62,11 @@ export default function SearchModal({
   const totalPages = total > 0 ? Math.ceil(total / ITEMS_PER_PAGE) : 0;
 
   const handleSearch = (value: string, mode: SearchMode) => {
-    setQuery(value.trim());
+    const trimmed = value.trim();
+    setQuery(trimmed);
+    setSearchQuery(trimmed); // Trigger search immediately
     setSearchMode(mode);
+    setCurrentPage(1); // Reset to first page
   };
 
   const handleSearchChange = (value: string) => {

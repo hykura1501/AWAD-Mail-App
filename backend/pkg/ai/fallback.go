@@ -162,3 +162,37 @@ func (f *FallbackService) ExtractTasksFromEmail(ctx context.Context, emailText s
 	
 	return nil, fmt.Errorf("no AI provider available for task extraction")
 }
+
+// GenerateSynonyms tries Gemini first (better quality), falls back to Ollama
+func (f *FallbackService) GenerateSynonyms(ctx context.Context, word string) ([]string, error) {
+	// Try Gemini first for synonyms (better understanding of concepts)
+	if f.gemini != nil {
+		result, err := f.gemini.GenerateSynonyms(ctx, word)
+		if err == nil {
+			return result, nil
+		}
+		
+		if isQuotaError(err) {
+			log.Printf("[AI] Gemini quota exhausted for synonyms: %v, falling back to Ollama", err)
+		} else {
+			log.Printf("[AI] Gemini error for synonyms: %v, falling back to Ollama", err)
+		}
+	}
+	
+	// Fallback to Ollama
+	if f.ollama != nil {
+		result, err := f.ollama.GenerateSynonyms(ctx, word)
+		if err == nil {
+			return result, nil
+		}
+		
+		if isConnectionError(err) && f.gemini != nil {
+			log.Printf("[AI] Ollama connection failed for synonyms: %v, retrying Gemini", err)
+			return f.gemini.GenerateSynonyms(ctx, word)
+		}
+		
+		return nil, fmt.Errorf("ollama synonyms generation failed: %w", err)
+	}
+	
+	return nil, fmt.Errorf("no AI provider available for synonyms generation")
+}

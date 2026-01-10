@@ -79,13 +79,31 @@ func (u *emailUsecase) SemanticSearch(userID, query string, limit, offset int) (
 		return []*emaildomain.Email{}, 0, fmt.Errorf("vector search not available")
 	}
 
+	// Generate synonyms to expand query (Conceptual Search)
+	expandedQuery := query
+	if u.aiService != nil {
+		synonyms, err := u.aiService.GenerateSynonyms(context.Background(), query)
+		if err == nil && len(synonyms) > 0 {
+			// Combine original query with top 10 concepts for better context
+			// e.g. "tiền" -> "tiền invoice salary payment transaction billing..."
+			topSynonyms := synonyms
+			if len(topSynonyms) > 10 {
+				topSynonyms = topSynonyms[:10]
+			}
+			expandedQuery = fmt.Sprintf("%s %s", query, strings.Join(topSynonyms, " "))
+			log.Printf("[SemanticSearch] Expanded query (Conceptual): '%s' -> '%s'", query, expandedQuery)
+		} else {
+			log.Printf("[SemanticSearch] Failed to generate synonyms or empty result: %v", err)
+		}
+	}
+
 	// Perform semantic search
 	ctx := context.Background()
 	emailIDs, distances, err := u.vectorSearchService.SemanticSearch(
 		ctx,
 		"emails", // collection name
 		userID,
-		query,
+		expandedQuery,
 		300, // Fetch fixed top 300 (Chroma quota limit) to ensure stable total count
 	)
 	if err != nil {

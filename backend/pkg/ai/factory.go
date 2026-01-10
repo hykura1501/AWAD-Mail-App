@@ -47,6 +47,10 @@ func (g *GeminiAdapter) ExtractTasksFromEmail(ctx context.Context, emailText str
 	return tasks, nil
 }
 
+func (g *GeminiAdapter) GenerateSynonyms(ctx context.Context, word string) ([]string, error) {
+	return g.service.GenerateSynonyms(ctx, word)
+}
+
 // NewSummarizerService creates a SummarizerService based on the config
 // This is the factory function - switch AI provider by changing config.Provider
 func NewSummarizerService(cfg Config) (SummarizerService, error) {

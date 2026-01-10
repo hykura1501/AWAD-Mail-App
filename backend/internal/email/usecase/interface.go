@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	emaildomain "ga03-backend/internal/email/domain"
+	"ga03-backend/pkg/ai"
 	"mime/multipart"
 	"time"
 )
@@ -40,9 +41,7 @@ type EmailUsecase interface {
 	UpdateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error
 	DeleteKanbanColumn(userID, columnID string) error
 	UpdateKanbanColumnOrders(userID string, orders map[string]int) error
-	SetGeminiService(svc interface {
-		SummarizeEmail(ctx context.Context, emailText string) (string, error)
-	})
+	SetAIService(svc ai.SummarizerService)
 	SetVectorSearchService(svc VectorSearchService)
 	SetEventService(svc EventService)
 }
