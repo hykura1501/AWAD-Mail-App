@@ -68,7 +68,7 @@ func NewChromaClient(cfg *config.Config) (*ChromaClient, error) {
 	ctx := context.Background()
 	collection, err := client.GetOrCreateCollection(
 		ctx,
-		"email_v2", // collection name
+		"email", // collection name
 		chroma.WithEmbeddingFunctionCreate(embedFunc),
 	)
 	if err != nil {
