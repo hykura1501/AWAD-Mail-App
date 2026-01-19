@@ -68,6 +68,28 @@ func (r *emailKanbanColumnRepository) GetEmailsByColumn(userID, columnID string)
 	return emailIDs, nil
 }
 
+// GetEmailColumnMap returns a map of emailID -> columnID for a user.
+func (r *emailKanbanColumnRepository) GetEmailColumnMap(userID string) (map[string]string, error) {
+	type row struct {
+		EmailID  string
+		ColumnID string
+	}
+
+	var rows []row
+	if err := r.db.Model(&emaildomain.EmailKanbanColumn{}).
+		Select("email_id, column_id").
+		Where("user_id = ?", userID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string, len(rows))
+	for _, r := range rows {
+		result[r.EmailID] = r.ColumnID
+	}
+	return result, nil
+}
+
 // RemoveEmailColumn removes the column mapping for an email
 func (r *emailKanbanColumnRepository) RemoveEmailColumn(userID, emailID string) error {
 	return r.db.Where("user_id = ? AND email_id = ?", userID, emailID).Delete(&emaildomain.EmailKanbanColumn{}).Error

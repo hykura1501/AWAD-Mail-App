@@ -34,12 +34,13 @@ export const emailService = {
   getEmailsByStatus: async (
     status: string,
     limit = 50,
-    offset = 0
+    offset = 0,
+    isKanban = false
   ): Promise<EmailsResponse> => {
     const response = await apiClient.get<EmailsResponse>(
       `/emails/status/${status}`,
       {
-        params: { limit, offset },
+        params: { limit, offset, is_kanban: isKanban },
       }
     );
     return response.data;

@@ -258,6 +258,28 @@ export default function EmailDetail({
         }
     };
 
+    const handleOpenInGmail = () => {
+        if (!email || !emailId) return;
+
+        // Gmail web URL format with authuser parameter to open correct account
+        // Format: https://mail.google.com/mail/u/?authuser={email}#all/{messageId}
+        // This ensures Gmail opens the correct account even if user has multiple accounts
+        let gmailUrl: string;
+        
+        if (user?.email) {
+            // Use authuser parameter to specify the account by email
+            gmailUrl = `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(user.email)}#all/${encodeURIComponent(emailId)}`;
+        } else {
+            // Fallback: let Gmail auto-detect (will use default account)
+            gmailUrl = `https://mail.google.com/mail/#all/${encodeURIComponent(emailId)}`;
+        }
+        
+        // Open in new tab
+        window.open(gmailUrl, '_blank', 'noopener,noreferrer');
+        
+        toast.success("Đang mở email trong Gmail...");
+    };
+
     const handleDownloadAttachment = async (
         attachmentId: string,
         filename: string
@@ -462,6 +484,17 @@ export default function EmailDetail({
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
+                                title="Mở trong Gmail"
+                                onClick={handleOpenInGmail}
+                            >
+                <span className="material-symbols-outlined text-[18px] [font-variation-settings:'wght'_300]">
+                  open_in_new
+                </span>
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
                                 title="Thêm"
                                 onClick={() => toast.info("Tính năng đang phát triển")}
                             >
@@ -574,6 +607,16 @@ export default function EmailDetail({
                                                     onClick={() => setIsMoreMenuOpen(false)}
                                                 />
                                                 <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-[#283039] rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden">
+                                                    <button
+                                                        onClick={() => {
+                                                            handleOpenInGmail();
+                                                            setIsMoreMenuOpen(false);
+                                                        }}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 flex items-center gap-2 transition-colors"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                                                        Mở trong Gmail
+                                                    </button>
                                                     <button
                                                         onClick={() => {
                                                             if (onExtractTask) {

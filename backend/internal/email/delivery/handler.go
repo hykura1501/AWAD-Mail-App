@@ -643,6 +643,7 @@ func (h *EmailHandler) GetAttachment(c *gin.Context) {
 // GET /emails/status/:status
 func (h *EmailHandler) GetEmailsByStatus(c *gin.Context) {
 	status := c.Param("status")
+	isKanban := c.Query("is_kanban") == "true"
 
 	user, exists := c.Get("user")
 	if !exists {
@@ -669,7 +670,7 @@ func (h *EmailHandler) GetEmailsByStatus(c *gin.Context) {
 		}
 	}
 
-	emails, total, err := h.emailUsecase.GetEmailsByStatus(userID, status, limit, offset)
+	emails, total, err := h.emailUsecase.GetEmailsByStatus(userID, status, limit, offset, isKanban)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

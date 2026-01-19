@@ -13,7 +13,7 @@ type EmailUsecase interface {
 	GetAllMailboxes(userID string) ([]*emaildomain.Mailbox, error)
 	GetMailboxByID(id string) (*emaildomain.Mailbox, error)
 	GetEmailsByMailbox(userID, mailboxID string, limit, offset int, query string) ([]*emaildomain.Email, int, error)
-	GetEmailsByStatus(userID, status string, limit, offset int) ([]*emaildomain.Email, int, error)
+	GetEmailsByStatus(userID, status string, limit, offset int, isKanban bool) ([]*emaildomain.Email, int, error)
 	GetEmailByID(userID, id string) (*emaildomain.Email, error)
 	GetAttachment(userID, messageID, attachmentID string) (*emaildomain.Attachment, []byte, error)
 	MarkEmailAsRead(userID, id string) error
@@ -34,7 +34,7 @@ type EmailUsecase interface {
 	StoreEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
 	UpsertEmailEmbedding(ctx context.Context, userID, emailID, subject, body string) error
 	SyncEmailToVectorDB(userID string, email *emaildomain.Email) // Sync a single email to vector DB
-	SyncAllEmailsForUser(userID string) // Sync all emails for a user to vector DB (async, non-blocking)
+	SyncAllEmailsForUser(userID string)                          // Sync all emails for a user to vector DB (async, non-blocking)
 	// Kanban Column Management
 	GetKanbanColumns(userID string) ([]*emaildomain.KanbanColumn, error)
 	CreateKanbanColumn(userID string, column *emaildomain.KanbanColumn) error

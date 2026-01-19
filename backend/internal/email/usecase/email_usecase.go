@@ -896,7 +896,7 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID, sourceColu
 }
 
 // GetEmailsByStatus returns emails by status (for Kanban columns)
-func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset int) ([]*emaildomain.Email, int, error) {
+func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset int, isKanban bool) ([]*emaildomain.Email, int, error) {
 	user, err := u.userRepo.FindByID(userID)
 	if err != nil {
 		return nil, 0, err
@@ -926,6 +926,33 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		}
 
 		var filtered []*emaildomain.Email
+		if isKanban {
+			// In Kanban mode, use DB mapping to guarantee uniqueness across columns.
+			emailToCol, err := u.emailKanbanColumnRepo.GetEmailColumnMap(userID)
+			if err != nil {
+				log.Printf("[GetEmailsByStatus][IMAP] Failed to get email-column map: %v", err)
+				emailToCol = map[string]string{}
+			}
+
+			for _, email := range emails {
+				col := emailToCol[email.ID]
+				switch status {
+				case "inbox":
+					// Inbox shows only unmapped emails or explicitly mapped to inbox.
+					if col == "" || col == "inbox" {
+						filtered = append(filtered, email)
+					}
+				default:
+					// Other columns show only emails mapped to that column.
+					if col == status {
+						filtered = append(filtered, email)
+					}
+				}
+			}
+			return filtered, len(filtered), nil
+		}
+
+		// Non-Kanban fallback: use in-memory status map.
 		if status == "inbox" {
 			for _, email := range emails {
 				u.kanbanStatusMu.RLock()
@@ -965,7 +992,8 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 	column, _ := u.kanbanColumnRepo.GetColumnByID(userID, status)
 
 	// If column has gmail_label_id, fetch emails directly from Gmail using that label
-	if column != nil && column.GmailLabelID != "" {
+	// NOTE: In Kanban mode, we avoid label-driven columns to prevent duplicates across columns.
+	if !isKanban && column != nil && column.GmailLabelID != "" {
 		log.Printf("[GetEmailsByStatus] Column %s mapped to Gmail label %s - fetching from Gmail", status, column.GmailLabelID)
 
 		// Use the Gmail label ID directly to fetch emails
@@ -1051,6 +1079,67 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		}
 
 		return emails, len(snoozedEmailIDs), nil
+	}
+
+	// Kanban mode: ensure no email appears in multiple columns.
+	// - Non-inbox columns are driven purely by DB mapping (stable pagination + uniqueness).
+	// - Inbox shows only emails that are not mapped to any other column (or explicitly mapped to inbox).
+	if isKanban {
+		if status != "inbox" {
+			dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
+			if err != nil {
+				log.Printf("[GetEmailsByStatus] Failed to get emails for column %s: %v", status, err)
+				return []*emaildomain.Email{}, 0, nil
+			}
+
+			if len(dbEmailIDs) == 0 {
+				return []*emaildomain.Email{}, 0, nil
+			}
+
+			start := offset
+			end := offset + limit
+			if start >= len(dbEmailIDs) {
+				return []*emaildomain.Email{}, len(dbEmailIDs), nil
+			}
+			if end > len(dbEmailIDs) {
+				end = len(dbEmailIDs)
+			}
+			paginatedIDs := dbEmailIDs[start:end]
+
+			var mapped []*emaildomain.Email
+			for _, emailID := range paginatedIDs {
+				email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
+				if err != nil {
+					log.Printf("[GetEmailsByStatus] Failed to fetch email %s for column %s: %v", emailID, status, err)
+					continue
+				}
+				if email != nil {
+					mapped = append(mapped, email)
+				}
+			}
+			return mapped, len(dbEmailIDs), nil
+		}
+
+		// status == "inbox"
+		emailToCol, err := u.emailKanbanColumnRepo.GetEmailColumnMap(userID)
+		if err != nil {
+			log.Printf("[GetEmailsByStatus] Failed to get email-column map: %v", err)
+			emailToCol = map[string]string{}
+		}
+
+		inboxEmails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit, offset, "", u.makeTokenUpdateCallback(userID))
+		if err != nil {
+			return nil, 0, err
+		}
+
+		filtered := make([]*emaildomain.Email, 0, len(inboxEmails))
+		for _, email := range inboxEmails {
+			col := emailToCol[email.ID]
+			if col == "" || col == "inbox" {
+				filtered = append(filtered, email)
+			}
+		}
+		return filtered, len(filtered), nil
 	}
 
 	// Default behavior: Fetch from INBOX with exact limit (avoid over-fetching for performance)

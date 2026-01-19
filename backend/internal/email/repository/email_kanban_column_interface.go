@@ -18,6 +18,10 @@ type EmailKanbanColumnRepository interface {
 	
 	// GetEmailsByColumn gets all email IDs for a specific column
 	GetEmailsByColumn(userID, columnID string) ([]string, error)
+
+	// GetEmailColumnMap returns a map of emailID -> columnID for a user.
+	// Used to ensure an email doesn't appear in multiple columns in Kanban mode.
+	GetEmailColumnMap(userID string) (map[string]string, error)
 	
 	// RemoveEmailColumn removes the column mapping for an email
 	RemoveEmailColumn(userID, emailID string) error

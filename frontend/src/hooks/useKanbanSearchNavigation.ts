@@ -116,7 +116,7 @@ export function useKanbanSearchNavigation({
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       try {
         // Load batch of emails from the column
-        const response = await emailService.getEmailsByStatus(columnId, BATCH_SIZE, offset);
+        const response = await emailService.getEmailsByStatus(columnId, BATCH_SIZE, offset, true);
         const emails = response.emails;
         
         if (!emails || emails.length === 0) {
