@@ -454,50 +454,50 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 		data        []byte
 	}
 	var extractedImages []inlineImageData
-	
+
 	// Regex to find data URIs in img tags
 	dataURIRegex := regexp.MustCompile(`<img([^>]*?)src="data:([^;]+);base64,([^"]+)"([^>]*)>`)
 	imageCounter := 0
-	
+
 	processedBody := dataURIRegex.ReplaceAllStringFunc(body, func(match string) string {
 		submatches := dataURIRegex.FindStringSubmatch(match)
 		if len(submatches) < 5 {
 			return match
 		}
-		
+
 		beforeSrc := submatches[1]
 		contentType := submatches[2]
 		base64Data := submatches[3]
 		afterSrc := submatches[4]
-		
+
 		// Decode base64 data
 		imageData, err := base64.StdEncoding.DecodeString(base64Data)
 		if err != nil {
 			log.Printf("Failed to decode inline image: %v", err)
 			return match
 		}
-		
+
 		// Generate Content-ID
 		imageCounter++
 		contentID := fmt.Sprintf("inline_image_%d_%d", time.Now().UnixNano(), imageCounter)
-		
+
 		// Store the image data
 		extractedImages = append(extractedImages, inlineImageData{
 			contentID:   contentID,
 			contentType: contentType,
 			data:        imageData,
 		})
-		
+
 		// Replace data URI with cid: reference
 		return fmt.Sprintf(`<img%ssrc="cid:%s"%s>`, beforeSrc, contentID, afterSrc)
 	})
-	
+
 	log.Printf("Gmail Service - Extracted %d inline images from data URIs", len(extractedImages))
 
 	// Separate inline images (with Content-ID) from regular attachments
 	var inlineImages []*multipart.FileHeader
 	var regularAttachments []*multipart.FileHeader
-	
+
 	for _, file := range files {
 		// Check if file has Content-ID header (inline image)
 		if file.Header.Get("Content-ID") != "" {
@@ -506,7 +506,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 			regularAttachments = append(regularAttachments, file)
 		}
 	}
-	
+
 	log.Printf("Gmail Service - Subject: %s", subject)
 	log.Printf("Gmail Service - FromName: %s", fromName)
 
@@ -541,32 +541,32 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 	if bcc != "" {
 		emailMsg.WriteString(fmt.Sprintf("Bcc: %s\r\n", bcc))
 	}
-	
+
 	// Subject
 	encodedSubject := encodeHeader(subject)
 	log.Printf("Gmail Service - Encoded Subject: %s", encodedSubject)
 	emailMsg.WriteString(fmt.Sprintf("Subject: %s\r\n", encodedSubject))
-	
+
 	emailMsg.WriteString("MIME-Version: 1.0\r\n")
-	
+
 	// Determine if we need multipart/related (for inline images)
 	hasInlineImages := len(extractedImages) > 0 || len(inlineImages) > 0
-	
+
 	// Use multipart/mixed as the outer container
 	emailMsg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", mixedBoundary))
 
 	// First part: HTML body (possibly with inline images using multipart/related)
 	emailMsg.WriteString(fmt.Sprintf("--%s\r\n", mixedBoundary))
-	
+
 	if hasInlineImages {
 		// Use multipart/related for HTML + inline images
 		emailMsg.WriteString(fmt.Sprintf("Content-Type: multipart/related; boundary=\"%s\"\r\n\r\n", relatedBoundary))
-		
+
 		// HTML part - encode as base64 to handle UTF-8 properly
 		emailMsg.WriteString(fmt.Sprintf("--%s\r\n", relatedBoundary))
 		emailMsg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 		emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
-		
+
 		// Encode processed body (with cid: references) as base64
 		encodedBody := base64.StdEncoding.EncodeToString([]byte(processedBody))
 		for i := 0; i < len(encodedBody); i += 76 {
@@ -576,7 +576,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 			}
 			emailMsg.WriteString(encodedBody[i:end] + "\r\n")
 		}
-		
+
 		// Inline images with Content-ID
 		for _, file := range inlineImages {
 			f, err := file.Open()
@@ -594,14 +594,14 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 			contentID := file.Header.Get("Content-ID")
 			contentType := file.Header.Get("Content-Type")
 			filename := file.Filename
-			
+
 			log.Printf("Gmail Service - Inline image filename: %s", filename)
 			log.Printf("Gmail Service - Inline image contentType: %s", contentType)
 			log.Printf("Gmail Service - Inline image contentID: %s", contentID)
-			
+
 			// Encode filename for MIME header (RFC 2047)
 			encodedFilename := encodeHeader(filename)
-			
+
 			emailMsg.WriteString(fmt.Sprintf("--%s\r\n", relatedBoundary))
 			emailMsg.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", contentType, encodedFilename))
 			emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n")
@@ -617,11 +617,11 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 				emailMsg.WriteString(encodedContent[i:end] + "\r\n")
 			}
 		}
-		
+
 		// Add extracted images (from data URIs in HTML)
 		for _, img := range extractedImages {
 			encodedContent := base64.StdEncoding.EncodeToString(img.data)
-			
+
 			emailMsg.WriteString(fmt.Sprintf("--%s\r\n", relatedBoundary))
 			emailMsg.WriteString(fmt.Sprintf("Content-Type: %s\r\n", img.contentType))
 			emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n")
@@ -637,7 +637,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 				emailMsg.WriteString(encodedContent[i:end] + "\r\n")
 			}
 		}
-		
+
 		// Close related boundary
 		emailMsg.WriteString(fmt.Sprintf("--%s--\r\n", relatedBoundary))
 	} else {
@@ -645,7 +645,7 @@ func (s *Service) SendEmail(ctx context.Context, accessToken, refreshToken, from
 		// This prevents Gmail from double-encoding UTF-8 when body contains large data URIs
 		emailMsg.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 		emailMsg.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
-		
+
 		// Encode body as base64 and split into 76-char lines
 		encodedBody := base64.StdEncoding.EncodeToString([]byte(body))
 		for i := 0; i < len(encodedBody); i += 76 {
@@ -865,19 +865,19 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 		// Remove style blocks (CSS) - MUST be done before stripping tags
 		reStyle := regexp.MustCompile(`(?i)<style[^>]*>[\s\S]*?</style>`)
 		preview = reStyle.ReplaceAllString(preview, " ")
-		
+
 		// Remove script blocks
 		reScript := regexp.MustCompile(`(?i)<script[^>]*>[\s\S]*?</script>`)
 		preview = reScript.ReplaceAllString(preview, " ")
-		
+
 		// Remove head block (contains meta, title, styles)
 		reHead := regexp.MustCompile(`(?i)<head[^>]*>[\s\S]*?</head>`)
 		preview = reHead.ReplaceAllString(preview, " ")
-		
+
 		// Strip remaining HTML tags
 		re := regexp.MustCompile(`<[^>]*>`)
 		preview = re.ReplaceAllString(preview, " ")
-		
+
 		// Unescape HTML entities (basic ones)
 		preview = strings.ReplaceAll(preview, "&nbsp;", " ")
 		preview = strings.ReplaceAll(preview, "&lt;", "<")
@@ -918,23 +918,10 @@ func convertGmailMessageToEmail(msg *gmail.Message) *emaildomain.Email {
 func getHeader(headers []*gmail.MessagePartHeader, name string) string {
 	for _, header := range headers {
 		if header.Name == name {
-			// Debug: log raw header value
-			if name == "Subject" || name == "From" {
-				log.Printf("[getHeader] Raw %s: %s", name, header.Value)
-			}
-			
-			// Decode RFC 2047 headers (e.g., =?UTF-8?B?...?=)
 			dec := new(mime.WordDecoder)
 			decoded, err := dec.DecodeHeader(header.Value)
 			if err != nil {
-				if name == "Subject" || name == "From" {
-					log.Printf("[getHeader] Decode error for %s: %v", name, err)
-				}
 				return header.Value
-			}
-			
-			if name == "Subject" || name == "From" {
-				log.Printf("[getHeader] Decoded %s: %s", name, decoded)
 			}
 			return decoded
 		}
@@ -995,9 +982,7 @@ func getAttachments(payload *gmail.MessagePart) []emaildomain.Attachment {
 		for _, part := range parts {
 			// Log all parts for debugging
 			contentID := getHeader(part.Headers, "Content-ID")
-			log.Printf("[getAttachments] Part MimeType: %s, Filename: %s, ContentID: %s, HasAttachmentId: %v", 
-				part.MimeType, part.Filename, contentID, part.Body != nil && part.Body.AttachmentId != "")
-			
+
 			// Check for inline parts (may not have filename but have Content-ID)
 			if contentID != "" && part.Body != nil && part.Body.AttachmentId != "" {
 				contentID = strings.Trim(contentID, "<>")

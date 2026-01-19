@@ -304,7 +304,6 @@ func (u *emailUsecase) SyncEmailToVectorDB(userID string, email *emaildomain.Ema
 	u.addToSuggestionCache(userID, email.FromName, email.Subject)
 
 	if u.vectorSearchService == nil {
-		log.Printf("[VectorSync] vectorSearchService is nil, skipping email %s", email.ID)
 		return
 	}
 
@@ -328,11 +327,9 @@ func (u *emailUsecase) SyncEmailToVectorDB(userID string, email *emaildomain.Ema
 	select {
 	case u.syncJobQueue <- job:
 		// Job enqueued successfully
-		log.Printf("[VectorSync] Enqueued sync job for email %s (subject: %s)", email.ID, email.Subject)
 	default:
 		// Queue is full, skip this sync to avoid blocking
 		// Emails will be synced when user fetches them again or queue has space
-		log.Printf("[VectorSync] Queue full, skipping email %s (will retry later)", email.ID)
 	}
 }
 
@@ -370,4 +367,3 @@ func (u *emailUsecase) addToSuggestionCache(userID, fromName, subject string) {
 		}
 	}
 }
-

@@ -47,3 +47,6 @@ logs/
 *.log
 .idea
 backend/noti-firebase.json
+
+prompts
+.shared

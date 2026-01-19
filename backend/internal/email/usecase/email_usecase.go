@@ -39,24 +39,22 @@ type emailUsecase struct {
 	topicName             string
 	aiService             ai.SummarizerService
 	kanbanStatus          map[string]string // emailID -> status
-	kanbanStatusMu      sync.RWMutex      // Mutex to protect kanbanStatus map
-	vectorSearchService VectorSearchService
-	syncJobQueue        chan EmailSyncJob // Job queue for email sync workers
-	workerWg            sync.WaitGroup    // Wait group for workers
+	kanbanStatusMu        sync.RWMutex      // Mutex to protect kanbanStatus map
+	vectorSearchService   VectorSearchService
+	syncJobQueue          chan EmailSyncJob // Job queue for email sync workers
+	workerWg              sync.WaitGroup    // Wait group for workers
 
 	// Suggestion cache: stores FromName and Subject for fast auto-suggest
 	// Key: userID, Value: map of unique suggestions (FromName or Subject)
 	suggestionCache   map[string]map[string]struct{}
 	suggestionCacheMu sync.RWMutex
-	eventService        EventService      // injected event service
+	eventService      EventService // injected event service
 }
 
 // SetEventService allows wiring EventService after creation
 func (u *emailUsecase) SetEventService(svc EventService) {
 	u.eventService = svc
 }
-
-
 
 // EmailSyncJob represents a job to sync an email to vector DB
 type EmailSyncJob struct {
@@ -119,11 +117,9 @@ func (u *emailUsecase) startSyncWorkers(workerCount int) {
 // syncWorker processes email sync jobs from the queue
 func (u *emailUsecase) syncWorker(workerID int) {
 	defer u.workerWg.Done()
-	log.Printf("[VectorSync] Worker %d started", workerID)
 
 	for job := range u.syncJobQueue {
 		if u.vectorSearchService == nil {
-			log.Printf("[VectorSync] Worker %d: vectorSearchService is nil", workerID)
 			continue
 		}
 
@@ -856,10 +852,22 @@ func (u *emailUsecase) MoveEmailToMailbox(userID, emailID, mailboxID, sourceColu
 
 			ctx := context.Background()
 			log.Printf("[MoveEmail] Source: %s (label: %v), Target: %s (label: %v)",
-				actualSourceColumnID, 
-				func() string { if sourceColumn != nil { return sourceColumn.GmailLabelID } else { return "nil" }}(),
+				actualSourceColumnID,
+				func() string {
+					if sourceColumn != nil {
+						return sourceColumn.GmailLabelID
+					} else {
+						return "nil"
+					}
+				}(),
 				mailboxID,
-				func() string { if targetColumn != nil { return targetColumn.GmailLabelID } else { return "nil" }}())
+				func() string {
+					if targetColumn != nil {
+						return targetColumn.GmailLabelID
+					} else {
+						return "nil"
+					}
+				}())
 			log.Printf("[MoveEmail] Applying labels - Add: %v, Remove: %v", addLabelIDs, removeLabelIDs)
 
 			// Only call API if there are actual changes
@@ -1023,14 +1031,14 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			email, err := u.mailProvider.GetEmailByID(ctx, accessToken, refreshToken, emailID, u.makeTokenUpdateCallback(userID))
 			if err != nil {
 				log.Printf("[GetEmailsByStatus] Failed to fetch snoozed email %s from provider: %v", emailID, err)
-				
+
 				// Fallback to local email if provider fails
 				if localEmail != nil {
 					emails = append(emails, localEmail)
 				}
 				continue
 			}
-			
+
 			if email != nil {
 				// Enrich with local data if available
 				if localEmail != nil {
@@ -1044,7 +1052,6 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 
 		return emails, len(snoozedEmailIDs), nil
 	}
-
 
 	// Default behavior: Fetch from INBOX with exact limit (avoid over-fetching for performance)
 	emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit, offset, "", u.makeTokenUpdateCallback(userID))
@@ -1602,10 +1609,10 @@ func (u *emailUsecase) GetKanbanColumns(userID string) ([]*emaildomain.KanbanCol
 			UserID:         userID,
 		},
 		{
-			ColumnID:       "snoozed",
-			Name:           "Snoozed",
-			Order:          3,
-			UserID:         userID,
+			ColumnID: "snoozed",
+			Name:     "Snoozed",
+			Order:    3,
+			UserID:   userID,
 		},
 	}
 
