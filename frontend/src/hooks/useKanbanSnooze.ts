@@ -8,6 +8,8 @@ export interface EmailToSnooze {
 }
 
 export interface UseKanbanSnoozeOptions {
+  /** Callback to reload all Kanban columns after snooze */
+  onSnoozed?: () => Promise<void>;
 }
 
 export interface UseKanbanSnoozeReturn {
@@ -25,8 +27,9 @@ export interface UseKanbanSnoozeReturn {
 /**
  * Custom hook for Kanban snooze functionality
  */
-export function useKanbanSnooze(): UseKanbanSnoozeReturn {
+export function useKanbanSnooze(options: UseKanbanSnoozeOptions = {}): UseKanbanSnoozeReturn {
   const queryClient = useQueryClient();
+  const { onSnoozed } = options;
   const [snoozeDialogOpen, setSnoozeDialogOpen] = useState(false);
   const [emailToSnooze, setEmailToSnooze] = useState<EmailToSnooze | null>(null);
   const [snoozingEmailId, setSnoozingEmailId] = useState<string | null>(null);
@@ -47,11 +50,21 @@ export function useKanbanSnooze(): UseKanbanSnoozeReturn {
     const emailId = emailToSnooze.id;
     setSnoozingEmailId(emailId);
 
+    // Close dialog immediately
+    setSnoozeDialogOpen(false);
+    setEmailToSnooze(null);
+
     // Call API
     emailService.snoozeEmail(emailId, snoozeUntil)
-      .then(() => {
-        // Invalidate all emails to refresh board
-        return queryClient.invalidateQueries({ queryKey: ['emails'] });
+      .then(async () => {
+        // Invalidate all Kanban email queries to refresh board
+        queryClient.invalidateQueries({ queryKey: ["kanban", "emails"] });
+        // Also invalidate generic emails for other pages
+        queryClient.invalidateQueries({ queryKey: ["emails"] });
+        // Call callback if provided (to reload columns)
+        if (onSnoozed) {
+          await onSnoozed();
+        }
       })
       .catch((error) => {
         console.error("Error snoozing email:", error);
@@ -59,11 +72,7 @@ export function useKanbanSnooze(): UseKanbanSnoozeReturn {
       .finally(() => {
         setSnoozingEmailId(null);
       });
-
-    // Close dialog immediately
-    setSnoozeDialogOpen(false);
-    setEmailToSnooze(null);
-  }, [emailToSnooze, queryClient]);
+  }, [emailToSnooze, queryClient, onSnoozed]);
 
   return {
     snoozeDialogOpen,

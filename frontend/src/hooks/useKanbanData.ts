@@ -1,17 +1,27 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Email, KanbanColumnConfig, Mailbox } from "@/types/email";
+import type { Email, KanbanColumnConfig, Mailbox, EmailsResponse } from "@/types/email";
 import { emailService } from "@/services/email.service";
-import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_COLUMN_IDS = ["inbox", "todo", "done", "snoozed"] as const;
+
+// Query keys for React Query
+const QUERY_KEYS = {
+  kanbanColumns: ["kanban", "columns"] as const,
+  mailboxes: ["mailboxes"] as const,
+  kanbanEmails: (columnId: string, limit: number, offset: number, isKanban: boolean) =>
+    ["kanban", "emails", columnId, limit, offset, isKanban] as const,
+};
 
 export interface UseKanbanDataOptions {
   /** Initial page size for each column */
   limit?: number;
   /** Callback when all columns finish loading */
   onInitComplete?: (emailIds: string[]) => void;
+  /** When true, request Kanban-deduped data from backend */
+  isKanban?: boolean;
 }
 
 export interface UseKanbanDataReturn {
@@ -21,11 +31,11 @@ export interface UseKanbanDataReturn {
   kanbanOffsets: Record<string, number>;
   kanbanColumnConfigs: KanbanColumnConfig[];
   mailboxes: Mailbox[];
-
-  // Loading states
+  
+  // Loading states (consolidated into Record)
   loadingColumns: Record<string, boolean>;
   isAnyLoading: boolean;
-
+  
   // Actions
   loadColumn: (status: string, offset: number) => Promise<void>;
   reloadAllColumns: () => Promise<void>;
@@ -33,17 +43,32 @@ export interface UseKanbanDataReturn {
   updatePage: (col: string, dir: 1 | -1) => void;
   setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>>;
   setKanbanColumnConfigs: React.Dispatch<React.SetStateAction<KanbanColumnConfig[]>>;
-
+  
   // Constants
   limit: number;
 }
 
 /**
  * Custom hook for Kanban board data management using React Query
+ * 
+ * Features:
+ * - Automatic caching with React Query
+ * - Optimistic updates for drag-drop
+ * - Cache invalidation after mutations
+ * - Pagination per column
+ * 
+ * @example
+ * ```tsx
+ * const { kanbanEmails, loadingColumns, moveEmail } = useKanbanData({
+ *   isKanban: true,
+ *   onInitComplete: (emailIds) => queueSummaries(emailIds),
+ * });
+ * ```
  */
 export function useKanbanData({
   limit = DEFAULT_LIMIT,
   onInitComplete,
+  isKanban = false,
 }: UseKanbanDataOptions = {}): UseKanbanDataReturn {
   const queryClient = useQueryClient();
 
@@ -57,15 +82,21 @@ export function useKanbanData({
 
   // 1. Fetch Column Configs
   const { data: kanbanColumnConfigs = [] } = useQuery({
-    queryKey: ['kanbanColumns'],
-    queryFn: () => emailService.getKanbanColumns(),
+    queryKey: QUERY_KEYS.kanbanColumns,
+    queryFn: async () => {
+      const columns = await emailService.getKanbanColumns();
+      return columns;
+    },
     staleTime: 1000 * 60 * 5, // 5 mins
   });
 
   // 2. Fetch Mailboxes
   const { data: mailboxes = [] } = useQuery({
-    queryKey: ['mailboxes'],
-    queryFn: () => emailService.getAllMailboxes(),
+    queryKey: QUERY_KEYS.mailboxes,
+    queryFn: async () => {
+      const mbs = await emailService.getAllMailboxes();
+      return mbs;
+    },
     staleTime: 1000 * 60 * 60, // 1 hour
   });
 
@@ -73,7 +104,7 @@ export function useKanbanData({
   const allColumnIds = useMemo(() => {
     const defaultIds = new Set(DEFAULT_COLUMN_IDS);
     const customIds = kanbanColumnConfigs
-      .filter((c) => !defaultIds.has(c.column_id as any))
+      .filter((c) => !defaultIds.has(c.column_id as typeof DEFAULT_COLUMN_IDS[number]))
       .map((c) => c.column_id);
     return [...DEFAULT_COLUMN_IDS, ...customIds];
   }, [kanbanColumnConfigs]);
@@ -81,10 +112,10 @@ export function useKanbanData({
   // 4. Fetch Emails for all columns using useQueries
   const emailQueries = useQueries({
     queries: allColumnIds.map((colId) => ({
-      queryKey: ['emails', colId, limit, kanbanOffsets[colId] || 0],
-      queryFn: () => emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] || 0, true),
-      // Keep data fresh for a bit, but revalidate in background
+      queryKey: QUERY_KEYS.kanbanEmails(colId, limit, kanbanOffsets[colId] || 0, isKanban),
+      queryFn: () => emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] || 0, isKanban),
       staleTime: 1000 * 30, // 30 seconds fresh
+      enabled: kanbanColumnConfigs.length > 0, // Wait for columns to load
     })),
   });
 
@@ -97,29 +128,135 @@ export function useKanbanData({
 
     allColumnIds.forEach((colId, index) => {
       const query = emailQueries[index];
-      // Note: query.data is { emails: Email[], total: number }
+      // Note: query.data is EmailsResponse { emails: Email[], total: number, limit, offset }
       emails[colId] = query.data?.emails || [];
       totals[colId] = query.data?.total || 0;
-      loading[colId] = query.isLoading;
-      if (query.isLoading) anyLoading = true;
+      loading[colId] = query.isLoading || query.isFetching;
+      if (query.isLoading || query.isFetching) anyLoading = true;
     });
 
-    return { kanbanEmails: emails, kanbanTotals: totals, loadingColumns: loading, isAnyLoading: anyLoading };
+    return { 
+      kanbanEmails: emails, 
+      kanbanTotals: totals, 
+      loadingColumns: loading, 
+      isAnyLoading: anyLoading 
+    };
   }, [allColumnIds, emailQueries]);
 
   // 6. Trigger onInitComplete when data is fully loaded for the first time
-  const [hasInitialized, setHasInitialized] = useState(false);
+  const hasInitializedRef = useRef(false);
 
   useEffect(() => {
-    if (!isAnyLoading && !hasInitialized) {
+    if (!isAnyLoading && !hasInitializedRef.current && kanbanColumnConfigs.length > 0) {
       // Collect all IDs
       const allIds = Object.values(kanbanEmails).flat().map(e => e.id);
       if (allIds.length > 0) {
         onInitComplete?.(allIds);
-        setHasInitialized(true);
+        hasInitializedRef.current = true;
       }
     }
-  }, [isAnyLoading, hasInitialized, kanbanEmails, onInitComplete]);
+  }, [isAnyLoading, kanbanEmails, kanbanColumnConfigs.length, onInitComplete]);
+
+  // 7. Move Email Mutation with Optimistic Update
+  const moveEmailMutation = useMutation({
+    mutationFn: async ({ 
+      emailId, 
+      targetColumnId, 
+      sourceColumnId 
+    }: { 
+      emailId: string; 
+      targetColumnId: string; 
+      sourceColumnId?: string;
+    }) => {
+      return emailService.moveEmailToMailbox(emailId, targetColumnId, sourceColumnId);
+    },
+    onMutate: async ({ emailId, targetColumnId, sourceColumnId }) => {
+      // Cancel outgoing refetches to avoid overwriting optimistic update
+      await queryClient.cancelQueries({ queryKey: ["kanban", "emails"] });
+
+      // Snapshot previous values for rollback
+      const previousQueries: Record<string, EmailsResponse | undefined> = {};
+      allColumnIds.forEach((colId) => {
+        const queryKey = QUERY_KEYS.kanbanEmails(colId, limit, kanbanOffsets[colId] || 0, isKanban);
+        previousQueries[colId] = queryClient.getQueryData<EmailsResponse>(queryKey);
+      });
+
+      // Find source column if not provided
+      let foundSourceColumnId = sourceColumnId;
+      if (!foundSourceColumnId) {
+        for (const [colId, emails] of Object.entries(kanbanEmails)) {
+          if (emails?.find((e) => e.id === emailId)) {
+            foundSourceColumnId = colId;
+            break;
+          }
+        }
+      }
+
+      // Find moved email from source column first
+      let movedEmail: Email | undefined;
+      if (foundSourceColumnId) {
+        const sourceQueryKey = QUERY_KEYS.kanbanEmails(foundSourceColumnId, limit, kanbanOffsets[foundSourceColumnId] || 0, isKanban);
+        const sourceData = queryClient.getQueryData<EmailsResponse>(sourceQueryKey);
+        if (sourceData) {
+          movedEmail = sourceData.emails.find((e) => e.id === emailId);
+        }
+      }
+
+      // Optimistically update source column (remove email)
+      if (foundSourceColumnId && movedEmail) {
+        const sourceQueryKey = QUERY_KEYS.kanbanEmails(foundSourceColumnId, limit, kanbanOffsets[foundSourceColumnId] || 0, isKanban);
+        const sourceData = queryClient.getQueryData<EmailsResponse>(sourceQueryKey);
+        if (sourceData) {
+          queryClient.setQueryData(sourceQueryKey, {
+            ...sourceData,
+            emails: sourceData.emails.filter((e) => e.id !== emailId),
+            total: Math.max(0, sourceData.total - 1),
+          });
+        }
+      }
+
+      // Optimistically update target column (add email)
+      if (targetColumnId && movedEmail) {
+        const targetQueryKey = QUERY_KEYS.kanbanEmails(targetColumnId, limit, kanbanOffsets[targetColumnId] || 0, isKanban);
+        const targetData = queryClient.getQueryData<EmailsResponse>(targetQueryKey);
+        if (targetData) {
+          const updatedEmail = { ...movedEmail, mailbox_id: targetColumnId };
+          queryClient.setQueryData(targetQueryKey, {
+            ...targetData,
+            emails: [updatedEmail, ...targetData.emails],
+            total: targetData.total + 1,
+          });
+        }
+      }
+
+      return { previousQueries, foundSourceColumnId };
+    },
+    onError: (err, _variables, context) => {
+      // Rollback on error
+      if (context?.previousQueries) {
+        Object.entries(context.previousQueries).forEach(([colId, previousData]) => {
+          if (previousData) {
+            const queryKey = QUERY_KEYS.kanbanEmails(colId, limit, kanbanOffsets[colId] || 0, isKanban);
+            queryClient.setQueryData(queryKey, previousData);
+          }
+        });
+      }
+      console.error("Error moving email:", err);
+      toast.error("Gặp lỗi khi di chuyển email");
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate all kanban email queries to refetch fresh data
+      queryClient.invalidateQueries({ 
+        queryKey: ["kanban", "emails"],
+        refetchType: "active", // Only refetch active queries
+      });
+      
+      // Show success toast with target column name
+      const targetColumn = kanbanColumnConfigs.find(c => c.column_id === variables.targetColumnId);
+      const columnName = targetColumn?.name || variables.targetColumnId;
+      toast.success(`Đã di chuyển email đến "${columnName}"`);
+    },
+  });
 
   // Actions
 
@@ -133,14 +270,13 @@ export function useKanbanData({
 
   // loadColumn just invalidates the query for that column/offset
   const loadColumn = useCallback(async (status: string, offset: number) => {
-    await queryClient.invalidateQueries({
-      queryKey: ['emails', status, limit, offset]
-    });
-  }, [queryClient, limit]);
+    const queryKey = QUERY_KEYS.kanbanEmails(status, limit, offset, isKanban);
+    await queryClient.invalidateQueries({ queryKey });
+  }, [queryClient, limit, isKanban]);
 
   const reloadAllColumns = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['emails'] });
-    await queryClient.invalidateQueries({ queryKey: ['kanbanColumns'] });
+    await queryClient.invalidateQueries({ queryKey: ["kanban", "emails"] });
+    await queryClient.invalidateQueries({ queryKey: QUERY_KEYS.kanbanColumns });
   }, [queryClient]);
 
   const moveEmail = useCallback((
@@ -148,40 +284,17 @@ export function useKanbanData({
     targetColumnId: string,
     sourceColumnId?: string
   ) => {
-    // Identify source column if not provided (scan current derived emails)
-    let foundSourceColumnId = sourceColumnId;
-    if (!foundSourceColumnId) {
-      // Scan to find source
-      for (const [colId, emails] of Object.entries(kanbanEmails)) {
-        if (emails?.find((e) => e.id === emailId)) {
-          foundSourceColumnId = colId;
-          break;
-        }
-      }
-    }
+    moveEmailMutation.mutate({ emailId, targetColumnId, sourceColumnId });
+  }, [moveEmailMutation]);
 
-    emailService.moveEmailToMailbox(emailId, targetColumnId, foundSourceColumnId)
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: ['emails'] });
-        toast.success("Đã di chuyển email");
-      })
-      .catch((err) => {
-        console.error(err);
-        toast.error('Gặp lỗi khi di chuyển mail');
-      });
+  // Compatibility shims (for components that might still use these)
+  const setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>> = useCallback(() => {
+    console.warn("setKanbanEmails shim called - use React Query mutations instead");
+  }, []);
 
-    // Trigger immediate invalidation to start refetching (optimistic-like responsiveness)
-    queryClient.invalidateQueries({ queryKey: ['emails'] });
-
-  }, [queryClient, kanbanEmails]); // Added kanbanEmails dependency for finding source if needed
-
-  // Compatibility shims
-  const setKanbanEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>> = () => {
-    console.warn("setKanbanEmails shim called - no-op in React Query mode");
-  };
-
-  const setKanbanColumnConfigs: React.Dispatch<React.SetStateAction<KanbanColumnConfig[]>> = () => {
-  };
+  const setKanbanColumnConfigs: React.Dispatch<React.SetStateAction<KanbanColumnConfig[]>> = useCallback(() => {
+    console.warn("setKanbanColumnConfigs shim called - use React Query mutations instead");
+  }, []);
 
   return {
     kanbanEmails,

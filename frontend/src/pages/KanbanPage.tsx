@@ -93,6 +93,7 @@ export default function KanbanPage() {
     setKanbanColumnConfigs,
     limit,
   } = useKanbanData({
+    isKanban: true,
     onInitComplete: (emailIds) => {
       // Queue all loaded emails for AI summarization
       console.log(`[KanbanPage] Queueing ${emailIds.length} emails for summarization`);
@@ -129,7 +130,9 @@ export default function KanbanPage() {
     closeSnoozeDialog,
     confirmSnooze,
     snoozingEmailId,
-  } = useKanbanSnooze();
+  } = useKanbanSnooze({
+    onSnoozed: reloadAllKanbanColumns,
+  });
 
   const [unsnoozingEmailIds, setUnsnoozingEmailIds] = useState<Set<string>>(new Set());
 
@@ -231,7 +234,7 @@ export default function KanbanPage() {
 
     // Return default columns first, then custom columns
     return [...defaultColumns, ...customColumns];
-  }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit, kanbanColumnConfigs]);
+  }, [kanbanEmails, kanbanOffsets, filters, sortBy, limit, kanbanColumnConfigs, filterEmails, sortEmails]);
 
   // SSE connection for real-time updates - using custom hook
   // KanbanPage has special handlers for summary updates and Kanban reloading
