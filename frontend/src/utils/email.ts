@@ -173,3 +173,55 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
+
+/**
+ * Check if a file type can be viewed directly in browser
+ * 
+ * @param mimeType - MIME type of the file
+ * @returns true if file can be viewed in browser
+ */
+export function isViewableFileType(mimeType: string): boolean {
+  if (!mimeType) return false;
+  
+  // Images
+  if (mimeType.startsWith("image/")) {
+    return true;
+  }
+  
+  // PDFs
+  if (mimeType === "application/pdf") {
+    return true;
+  }
+  
+  // Text files
+  if (mimeType.startsWith("text/")) {
+    return true;
+  }
+  
+  // HTML
+  if (mimeType === "text/html" || mimeType === "application/xhtml+xml") {
+    return true;
+  }
+  
+  // JSON, XML
+  if (mimeType === "application/json" || mimeType === "application/xml" || mimeType === "text/xml") {
+    return true;
+  }
+  
+  // Office documents
+  if (
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || // .docx
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || // .xlsx
+    mimeType === "application/msword" || // .doc
+    mimeType === "application/vnd.ms-excel" // .xls
+  ) {
+    return true;
+  }
+  
+  // Video and audio (browser can play)
+  if (mimeType.startsWith("video/") || mimeType.startsWith("audio/")) {
+    return true;
+  }
+  
+  return false;
+}

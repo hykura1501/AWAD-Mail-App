@@ -6,7 +6,9 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	authdomain "ga03-backend/internal/auth/domain"
@@ -636,8 +638,76 @@ func (h *EmailHandler) GetAttachment(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Disposition", "attachment; filename="+attachment.Name)
+	// Check if view mode is requested (for inline viewing in browser)
+	viewMode := c.Query("view") == "true"
+
+	// Determine if file type is viewable in browser
+	isViewable := isViewableFileType(attachment.MimeType)
+
+	// Set Content-Type first (important for browser to recognize file type)
+	c.Header("Content-Type", attachment.MimeType)
+
+	if viewMode && isViewable {
+		// Set inline disposition for viewing in browser
+		// Use inline without filename to prevent download prompt
+		c.Header("Content-Disposition", "inline")
+		// Prevent browser from sniffing content type
+		c.Header("X-Content-Type-Options", "nosniff")
+		// Disable cache for view mode to ensure fresh content
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+	} else {
+		// Set attachment disposition for downloading.
+		// Use both filename and filename* to preserve UTF-8 filenames across browsers.
+		c.Header("Content-Disposition", buildAttachmentContentDisposition(attachment.Name))
+		// Set cache headers for better performance
+		c.Header("Cache-Control", "private, max-age=3600")
+	}
+
 	c.Data(http.StatusOK, attachment.MimeType, data)
+}
+
+func buildAttachmentContentDisposition(filename string) string {
+	// Basic quoted fallback (ASCII-ish) + RFC 5987 filename* (UTF-8)
+	safe := strings.ReplaceAll(filename, `"`, `'`)
+	utf8 := url.PathEscape(filename)
+	return `attachment; filename="` + safe + `"; filename*=UTF-8''` + utf8
+}
+
+// isViewableFileType checks if a MIME type can be viewed directly in browser
+func isViewableFileType(mimeType string) bool {
+	// Images
+	if strings.HasPrefix(mimeType, "image/") {
+		return true
+	}
+
+	// PDFs
+	if mimeType == "application/pdf" {
+		return true
+	}
+
+	// Text files
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+
+	// HTML
+	if mimeType == "text/html" || mimeType == "application/xhtml+xml" {
+		return true
+	}
+
+	// JSON, XML
+	if mimeType == "application/json" || mimeType == "application/xml" || mimeType == "text/xml" {
+		return true
+	}
+
+	// Video and audio (browser can play)
+	if strings.HasPrefix(mimeType, "video/") || strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+
+	return false
 }
 
 // GET /emails/status/:status

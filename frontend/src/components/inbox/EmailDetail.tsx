@@ -10,6 +10,22 @@ import { useAppSelector } from "@/store/hooks";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import StarIcon from "@/assets/star.svg?react";
+import { isViewableFileType } from "@/utils/email";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { Document, Page, pdfjs } from "react-pdf";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
+
+// Configure PDF.js worker - use worker from public folder
+// Worker file is copied from react-pdf's pdfjs-dist (version 5.4.296) to ensure version compatibility
+pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 interface EmailDetailProps {
     emailId: string | null;
@@ -32,6 +48,20 @@ export default function EmailDetail({
     const queryClient = useQueryClient();
     const { user } = useAppSelector((state) => state.auth);
     const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+    const [viewerAttachment, setViewerAttachment] = useState<{
+        id: string;
+        name: string;
+        mimeType: string;
+        url: string;
+    } | null>(null);
+    const [numPages, setNumPages] = useState<number | null>(null);
+    const [pdfLoading, setPdfLoading] = useState(false);
+    const [pdfError, setPdfError] = useState<string | null>(null);
+    const [docxContent, setDocxContent] = useState<string | null>(null);
+    const [xlsxContent, setXlsxContent] = useState<string | null>(null);
+    const [jsonContent, setJsonContent] = useState<unknown>(null);
+    const [fileLoading, setFileLoading] = useState(false);
+    const [fileError, setFileError] = useState<string | null>(null);
     
     // Track which emails we've already marked as read to avoid duplicate API calls
     const markedAsReadRef = useRef<Set<string>>(new Set());
@@ -290,18 +320,124 @@ export default function EmailDetail({
             const token = getAccessToken();
             const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachmentId}?token=${token}`;
 
-            // Trigger download
+            // Fetch -> blob -> object URL so the browser always uses our filename
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error("Failed to download attachment");
+            }
+
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+
             const link = document.createElement("a");
-            link.href = url;
+            link.href = objectUrl;
             link.download = filename;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            URL.revokeObjectURL(objectUrl);
 
             toast.success(`Đang tải xuống ${filename}`);
         } catch (error) {
             console.error("Download failed:", error);
             toast.error("Không thể tải xuống tệp đính kèm");
+        }
+    };
+
+    const handleViewAttachment = async (
+        attachmentId: string,
+        filename: string,
+        mimeType: string
+    ) => {
+        if (!emailId) return;
+
+        try {
+            const token = getAccessToken();
+            // Add view=true parameter to get inline content
+            const url = `${API_BASE_URL}/emails/${emailId}/attachments/${attachmentId}?view=true&token=${token}`;
+            
+            // Reset states
+            setPdfLoading(false);
+            setPdfError(null);
+            setFileLoading(true);
+            setFileError(null);
+            setDocxContent(null);
+            setXlsxContent(null);
+            setJsonContent(null);
+            
+            if (mimeType === "application/pdf") {
+                setNumPages(null);
+                setPdfLoading(true);
+            }
+            
+            // Fetch as blob
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error("Failed to fetch attachment");
+            }
+            
+            const blob = await response.blob();
+            
+            // Handle different file types
+            if (
+                mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                mimeType === "application/msword"
+            ) {
+                // Convert DOCX to HTML
+                const arrayBuffer = await blob.arrayBuffer();
+                const result = await mammoth.convertToHtml({ arrayBuffer });
+                setDocxContent(result.value);
+                setFileLoading(false);
+            } else if (
+                mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+                mimeType === "application/vnd.ms-excel"
+            ) {
+                // Convert XLSX to HTML table
+                const arrayBuffer = await blob.arrayBuffer();
+                const workbook = XLSX.read(arrayBuffer, { type: "array" });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const html = XLSX.utils.sheet_to_html(worksheet);
+                setXlsxContent(html);
+                setFileLoading(false);
+            } else if (mimeType === "application/json") {
+                // Parse and format JSON
+                const text = await blob.text();
+                try {
+                    const json = JSON.parse(text);
+                    setJsonContent(json);
+                    setFileLoading(false);
+                } catch {
+                    throw new Error("Invalid JSON format");
+                }
+            } else {
+                // For other files, create object URL
+                const objectUrl = URL.createObjectURL(blob);
+                setFileLoading(false);
+                
+                setViewerAttachment({
+                    id: attachmentId,
+                    name: filename,
+                    mimeType: mimeType,
+                    url: objectUrl,
+                });
+                return;
+            }
+            
+            // Set viewer attachment for DOCX/XLSX/JSON
+            setViewerAttachment({
+                id: attachmentId,
+                name: filename,
+                mimeType: mimeType,
+                url: "", // Not used for these types
+            });
+        } catch (error) {
+            console.error("View failed:", error);
+            toast.error("Không thể mở tệp đính kèm");
+            setFileError("Không thể tải file");
+            setPdfError("Không thể tải file");
+            setFileLoading(false);
+            setPdfLoading(false);
         }
     };
 
@@ -696,6 +832,7 @@ export default function EmailDetail({
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 {email.attachments.map((attachment) => {
                                     const iconName = getFileIcon(attachment.mime_type);
+                                    const canView = isViewableFileType(attachment.mime_type);
                                     return (
                                         <div
                                             key={attachment.id}
@@ -719,22 +856,43 @@ export default function EmailDetail({
                                                     {formatFileSize(attachment.size)}
                                                 </p>
                                             </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8 rounded-full hover:bg-gray-200"
-                                                title="Tải xuống"
-                                                onClick={() =>
-                                                    handleDownloadAttachment(
-                                                        attachment.id,
-                                                        attachment.name
-                                                    )
-                                                }
-                                            >
-                        <span className="material-symbols-outlined text-gray-500 text-[18px]">
-                          download
-                        </span>
-                                            </Button>
+                                            <div className="flex items-center gap-1">
+                                                {canView && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 rounded-full hover:bg-gray-200"
+                                                        title="Xem"
+                                                        onClick={() =>
+                                                            handleViewAttachment(
+                                                                attachment.id,
+                                                                attachment.name,
+                                                                attachment.mime_type
+                                                            )
+                                                        }
+                                                    >
+                                                        <span className="material-symbols-outlined text-gray-500 text-[18px]">
+                                                            visibility
+                                                        </span>
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 rounded-full hover:bg-gray-200"
+                                                    title="Tải xuống"
+                                                    onClick={() =>
+                                                        handleDownloadAttachment(
+                                                            attachment.id,
+                                                            attachment.name
+                                                        )
+                                                    }
+                                                >
+                                                    <span className="material-symbols-outlined text-gray-500 text-[18px]">
+                                                        download
+                                                    </span>
+                                                </Button>
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -776,6 +934,176 @@ export default function EmailDetail({
                     </div>
                 </div>
             </div>
+            
+            {/* Attachment Viewer Dialog */}
+            <Dialog 
+                open={!!viewerAttachment} 
+                onOpenChange={(open) => {
+                    if (!open && viewerAttachment) {
+                        // Clean up object URL when closing dialog
+                        if (viewerAttachment.url.startsWith("blob:")) {
+                            URL.revokeObjectURL(viewerAttachment.url);
+                        }
+                        setViewerAttachment(null);
+                        setNumPages(null);
+                        setPdfError(null);
+                        setPdfLoading(false);
+                    }
+                }}
+            >
+                <DialogContent className="max-w-[90vw] max-h-[90vh] w-full h-full flex flex-col p-0">
+                    <DialogHeader className="px-6 py-4 border-b shrink-0">
+                        <DialogTitle className="text-lg font-semibold">
+                            {viewerAttachment?.name}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-auto p-6">
+                        {viewerAttachment && (
+                            <>
+                                {viewerAttachment.mimeType.startsWith("image/") ? (
+                                    <img
+                                        src={viewerAttachment.url}
+                                        alt={viewerAttachment.name}
+                                        className="max-w-full max-h-full mx-auto object-contain"
+                                    />
+                                ) : viewerAttachment.mimeType === "application/pdf" ? (
+                                    <div className="flex flex-col items-center">
+                                        {pdfLoading && (
+                                            <div className="mb-4 text-gray-500">
+                                                Đang tải PDF...
+                                            </div>
+                                        )}
+                                        {pdfError && (
+                                            <div className="mb-4 text-red-500">
+                                                {pdfError}
+                                            </div>
+                                        )}
+                                        <Document
+                                            file={viewerAttachment.url}
+                                            onLoadSuccess={({ numPages }) => {
+                                                setNumPages(numPages);
+                                                setPdfLoading(false);
+                                                setPdfError(null);
+                                            }}
+                                            onLoadError={(error) => {
+                                                setPdfError(`Lỗi tải PDF: ${error.message}`);
+                                                setPdfLoading(false);
+                                            }}
+                                            loading={
+                                                <div className="text-gray-500">
+                                                    Đang tải PDF...
+                                                </div>
+                                            }
+                                            className="flex flex-col items-center"
+                                        >
+                                            {numPages &&
+                                                Array.from({ length: numPages }, (_, idx) => (
+                                                    <div
+                                                        key={`pdf_page_${idx + 1}`}
+                                                        className="mb-4 border border-gray-300 shadow-lg"
+                                                    >
+                                                        <Page
+                                                            pageNumber={idx + 1}
+                                                            renderTextLayer={true}
+                                                            renderAnnotationLayer={true}
+                                                            width={Math.min(800, window.innerWidth * 0.8)}
+                                                        />
+                                                    </div>
+                                                ))}
+                                        </Document>
+                                    </div>
+                                ) : viewerAttachment.mimeType.startsWith("text/") ? (
+                                    <iframe
+                                        src={viewerAttachment.url}
+                                        className="w-full h-full min-h-[400px] border-0"
+                                        title={viewerAttachment.name}
+                                    />
+                                ) : viewerAttachment.mimeType.startsWith("video/") ? (
+                                    <video
+                                        src={viewerAttachment.url}
+                                        controls
+                                        className="max-w-full max-h-full mx-auto"
+                                    />
+                                ) : viewerAttachment.mimeType.startsWith("audio/") ? (
+                                    <audio
+                                        src={viewerAttachment.url}
+                                        controls
+                                        className="w-full"
+                                    />
+                                ) : (
+                                    viewerAttachment.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                                    viewerAttachment.mimeType === "application/msword"
+                                ) ? (
+                                    <div className="w-full h-full overflow-auto">
+                                        {fileLoading && (
+                                            <div className="text-center text-gray-500 py-8">
+                                                Đang tải tài liệu...
+                                            </div>
+                                        )}
+                                        {fileError && (
+                                            <div className="text-center text-red-500 py-8">
+                                                {fileError}
+                                            </div>
+                                        )}
+                                        {docxContent && (
+                                            <div
+                                                className="prose max-w-none p-4 bg-white"
+                                                dangerouslySetInnerHTML={{ __html: docxContent }}
+                                            />
+                                        )}
+                                    </div>
+                                ) : (
+                                    viewerAttachment.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+                                    viewerAttachment.mimeType === "application/vnd.ms-excel"
+                                ) ? (
+                                    <div className="w-full h-full overflow-auto">
+                                        {fileLoading && (
+                                            <div className="text-center text-gray-500 py-8">
+                                                Đang tải bảng tính...
+                                            </div>
+                                        )}
+                                        {fileError && (
+                                            <div className="text-center text-red-500 py-8">
+                                                {fileError}
+                                            </div>
+                                        )}
+                                        {xlsxContent && (
+                                            <div
+                                                className="p-4 bg-white overflow-auto"
+                                                dangerouslySetInnerHTML={{ __html: xlsxContent }}
+                                            />
+                                        )}
+                                    </div>
+                                ) : viewerAttachment.mimeType === "application/json" ? (
+                                    <div className="w-full h-full overflow-auto">
+                                        {fileLoading && (
+                                            <div className="text-center text-gray-500 py-8">
+                                                Đang tải JSON...
+                                            </div>
+                                        )}
+                                        {fileError && (
+                                            <div className="text-center text-red-500 py-8">
+                                                {fileError}
+                                            </div>
+                                        )}
+                                        {jsonContent !== null && (
+                                            <pre className="p-4 bg-gray-50 rounded-lg overflow-auto text-sm">
+                                                <code>{JSON.stringify(jsonContent, null, 2)}</code>
+                                            </pre>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center h-full">
+                                        <p className="text-gray-500">
+                                            Không thể xem trước loại file này. Vui lòng tải xuống để xem.
+                                        </p>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
