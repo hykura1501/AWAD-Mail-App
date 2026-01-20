@@ -68,7 +68,7 @@ func NewChromaClient(cfg *config.Config) (*ChromaClient, error) {
 	ctx := context.Background()
 	collection, err := client.GetOrCreateCollection(
 		ctx,
-		"email", // collection name
+		"emails", // collection name - consistent with vector_search.go
 		chroma.WithEmbeddingFunctionCreate(embedFunc),
 	)
 	if err != nil {
