@@ -74,7 +74,7 @@ export default function KanbanPage() {
     requestSummary: handleRequestSummary,
     handleSummaryUpdate,
     loadDetailSummary,
-    // queueSummaries,
+    queueSummaries,
   } = useKanbanSummaries();
 
   // Kanban Data Hook - handles column loading, caching, pagination
@@ -97,7 +97,7 @@ export default function KanbanPage() {
     onInitComplete: (emailIds) => {
       // Queue all loaded emails for AI summarization
       console.log(`[KanbanPage] Queueing ${emailIds.length} emails for summarization`);
-      // queueSummaries(emailIds);
+      queueSummaries(emailIds);
     },
   });
 
