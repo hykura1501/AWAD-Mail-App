@@ -82,7 +82,7 @@ export function useKanbanData({
   const emailQueries = useQueries({
     queries: allColumnIds.map((colId) => ({
       queryKey: ['emails', colId, limit, kanbanOffsets[colId] || 0],
-      queryFn: () => emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] || 0),
+      queryFn: () => emailService.getEmailsByStatus(colId, limit, kanbanOffsets[colId] || 0, true),
       // Keep data fresh for a bit, but revalidate in background
       staleTime: 1000 * 30, // 30 seconds fresh
     })),
