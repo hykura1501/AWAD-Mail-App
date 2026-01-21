@@ -1749,7 +1749,9 @@ func (u *emailUsecase) UpdateKanbanColumn(userID string, column *emaildomain.Kan
 		return fmt.Errorf("column not found: %s", column.ColumnID)
 	}
 
-	// Preserve the primary key ID and merge updates
+	// Preserve the primary key ID and check for changes
+	labelChanged := existing.GmailLabelID != column.GmailLabelID
+	
 	existing.Name = column.Name
 	existing.GmailLabelID = column.GmailLabelID
 	existing.RemoveLabelIDs = column.RemoveLabelIDs
@@ -1757,7 +1759,53 @@ func (u *emailUsecase) UpdateKanbanColumn(userID string, column *emaildomain.Kan
 		existing.Order = column.Order
 	}
 
-	return u.kanbanColumnRepo.UpdateColumn(existing)
+	if err := u.kanbanColumnRepo.UpdateColumn(existing); err != nil {
+		return err
+	}
+
+	// If Gmail Label changed and is not empty, sync emails for this column
+	if labelChanged && column.GmailLabelID != "" {
+		// Run in background to not block response
+		go func() {
+			ctx := context.Background()
+			
+			// Get user tokens
+			accessToken, refreshToken, err := u.getUserTokens(userID)
+			if err != nil || accessToken == "" {
+				log.Printf("[UpdateKanbanColumn] Failed to get tokens for user %s: %v", userID, err)
+				return
+			}
+
+			log.Printf("[UpdateKanbanColumn] Label for column %s changed to %s - syncing emails...", column.ColumnID, column.GmailLabelID)
+
+			// Fetch latest emails from this label from Gmail
+			// Limit 50 to populate the board immediately
+			emails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, column.GmailLabelID, 50, 0, "", u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				log.Printf("[UpdateKanbanColumn] Failed to fetch emails for label %s: %v", column.GmailLabelID, err)
+				return
+			}
+
+			// Map these emails to the column
+			count := 0
+			for _, email := range emails {
+				// Update mapping
+				if err := u.emailKanbanColumnRepo.SetEmailColumn(userID, email.ID, column.ColumnID); err == nil {
+					count++
+					// Also update local cache/status if needed
+					u.kanbanStatusMu.Lock()
+					u.kanbanStatus[email.ID] = column.ColumnID
+					u.kanbanStatusMu.Unlock()
+					
+					// Sync to vector DB as well since we fetched fresh data
+					u.SyncEmailToVectorDB(userID, email)
+				}
+			}
+			log.Printf("[UpdateKanbanColumn] Automatically synced %d emails to column %s (label: %s)", count, column.ColumnID, column.GmailLabelID)
+		}()
+	}
+
+	return nil
 }
 
 // DeleteKanbanColumn deletes a Kanban column
