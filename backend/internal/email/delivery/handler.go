@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -485,8 +486,23 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 		return
 	}
 
+	// Validate email lists (To, Cc, Bcc can contain multiple emails separated by commas)
+	if err := emaildto.ValidateEmailList(req.To); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid 'To' email: %v", err)})
+		return
+	}
+	if err := emaildto.ValidateEmailList(req.Cc); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid 'Cc' email: %v", err)})
+		return
+	}
+	if err := emaildto.ValidateEmailList(req.Bcc); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid 'Bcc' email: %v", err)})
+		return
+	}
+
 	log.Printf("Handler Received - Subject: %s", req.Subject)
 	log.Printf("Handler Received - Body len: %d", len(req.Body))
+	log.Printf("Handler Received - To: %s", req.To)
 
 	user, exists := c.Get("user")
 	if !exists {
