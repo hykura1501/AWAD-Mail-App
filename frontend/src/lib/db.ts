@@ -52,6 +52,48 @@ export const getFromCache = async (key: string): Promise<any | null> => {
   }
 };
 
+export const deleteFromCache = async (key: string): Promise<void> => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    store.delete(key);
+    return new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.error("Error deleting from cache:", error);
+  }
+};
+
+export const clearSearchCache = async (): Promise<void> => {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.openCursor();
+    
+    return new Promise<void>((resolve, reject) => {
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          // Delete all cache entries that start with "search-"
+          if (cursor.key && typeof cursor.key === 'string' && cursor.key.startsWith('search-')) {
+            cursor.delete();
+          }
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error("Error clearing search cache:", error);
+  }
+};
+
 // Get all cached email data from IndexedDB
 export const getAllCachedEmails = async (): Promise<any[]> => {
   try {

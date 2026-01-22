@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { emailService } from "@/services/email.service";
-import { getFromCache, saveToCache } from "@/lib/db";
+import { getFromCache, saveToCache, clearSearchCache } from "@/lib/db";
 import type { Email, EmailsResponse } from "@/types/email";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -71,13 +71,20 @@ export default function EmailList({
     return () => clearTimeout(timer);
   }, [internalSearchQuery]);
 
-  // Reset page when external search query changes
+  // Reset page and clear cache when external search query changes
   useEffect(() => {
     if (searchQuery) {
       setCurrentPage(1);
       setCachedData(null); // Clear cache when starting a search
+      
+      // Clear React Query cache for semantic search
+      if (searchMode === "semantic") {
+        queryClient.removeQueries({ queryKey: ["search", "semantic"] });
+        // Clear IndexedDB cache for search results
+        clearSearchCache().catch(console.error);
+      }
     }
-  }, [searchQuery]);
+  }, [searchQuery, searchMode, queryClient]);
 
   // Clear cache when switching from search to mailbox
   useEffect(() => {
@@ -117,6 +124,8 @@ export default function EmailList({
       if (isExternalSearch) {
         // Use the selected search mode
         if (searchMode === "semantic") {
+          // Clear cache before semantic search to ensure fresh results
+          queryClient.removeQueries({ queryKey: ["search", "semantic", searchQuery] });
           result = await emailService.semanticSearch(
             searchQuery!,
             ITEMS_PER_PAGE,
@@ -138,7 +147,10 @@ export default function EmailList({
           debouncedInternalSearch
         );
       }
-      saveToCache(cacheKey, result);
+      // Only save to cache for non-semantic search (semantic search should always be fresh)
+      if (!isExternalSearch || searchMode !== "semantic") {
+        saveToCache(cacheKey, result);
+      }
       return result;
     },
     // Only run mailbox query when NOT searching, and only run search query when searching
