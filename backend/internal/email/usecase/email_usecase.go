@@ -1127,19 +1127,52 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 			emailToCol = map[string]string{}
 		}
 
-		inboxEmails, _, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", limit, offset, "", u.makeTokenUpdateCallback(userID))
-		if err != nil {
-			return nil, 0, err
+		var filtered []*emaildomain.Email
+		currentOffset := offset
+		
+		// Loop to fetch enough emails after filtering
+		// We try up to 5 times or until we find enough valid "inbox" emails
+		maxAttempts := 5
+		batchSize := limit
+		if batchSize < 50 {
+			batchSize = 50 // Fetch at least 50 at a time for efficiency
 		}
+		
+		var lastTotal int
+		
+		for i := 0; i < maxAttempts; i++ {
+			emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", batchSize, currentOffset, "", u.makeTokenUpdateCallback(userID))
+			if err != nil {
+				return nil, 0, err
+			}
+			lastTotal = total
+			
+			if len(emails) == 0 {
+				break
+			}
 
-		filtered := make([]*emaildomain.Email, 0, len(inboxEmails))
-		for _, email := range inboxEmails {
-			col := emailToCol[email.ID]
-			if col == "" || col == "inbox" {
-				filtered = append(filtered, email)
+			// Filter this batch
+			for _, email := range emails {
+				col := emailToCol[email.ID]
+				if col == "" || col == "inbox" {
+					filtered = append(filtered, email)
+				}
+			}
+			
+			currentOffset += len(emails)
+			
+			// If we have satisfied the limit, stop
+			if len(filtered) >= limit {
+				break
 			}
 		}
-		return filtered, len(filtered), nil
+		
+		// Trim to exact limit if we over-fetched
+		if len(filtered) > limit {
+			filtered = filtered[:limit]
+		}
+		
+		return filtered, lastTotal, nil
 	}
 
 	// Default behavior: Fetch from INBOX with exact limit (avoid over-fetching for performance)
