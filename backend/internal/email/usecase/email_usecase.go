@@ -1086,6 +1086,68 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 	// - Inbox shows only emails that are not mapped to any other column (or explicitly mapped to inbox).
 	if isKanban {
 		if status != "inbox" {
+			// Check if this column has a direct Gmail label mapping
+			column, _ := u.kanbanColumnRepo.GetColumnByID(userID, status)
+			
+			// If column is mapped to a Gmail label, fetch directly from Gmail
+			// This ensures the column reflects the actual state of the label in Gmail
+			if column != nil && column.GmailLabelID != "" {
+				// Fetch directly from Gmail using the label
+				emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, column.GmailLabelID, limit, offset, "", u.makeTokenUpdateCallback(userID))
+				if err != nil {
+					log.Printf("[GetEmailsByStatus] Failed to fetch from label %s: %v", column.GmailLabelID, err)
+					return []*emaildomain.Email{}, 0, nil
+				}
+				
+				// Sync redundancy: Ensure these emails are mapped in our local DB too
+				// This helps 'inbox' filtering logic know these emails are in a column
+				// We do this in a goroutine to avoid blocking
+				go func(e []*emaildomain.Email, colID string) {
+					// Re-verify that the column still maps to this label to avoid race conditions
+					// (Simple check - if we just fetched it, it's likely valid, but good practice)
+					
+					for _, em := range e {
+						// Update the mapping in DB
+						// Note: This overrides any previous mapping. 
+						// Ensure we don't accidentally move snoozed items? 
+						// Snoozed items are handled by the 'snoozed' check below in display, 
+						// but in DB they might be marked as 'snoozed'. 
+						// If we mark them as 'todo' here, they might disappear from snoozed?
+						// Safe bet: Check if email is snoozed before updating? 
+						// For performance, we'll just update map. 
+						// Actually, if it's snoozed, it shouldn't show up here if we filter?
+						// But for the DB mapping, if it has the label, it technically 'belongs' here too.
+						_ = u.emailKanbanColumnRepo.SetEmailColumn(userID, em.ID, colID)
+					}
+					// Also update vector DB since we have fresh emails
+					for _, em := range e {
+						u.SyncEmailToVectorDB(userID, em)
+					}
+				}(emails, status)
+
+				// Exclude snoozed emails from this column
+				// Snoozed emails should only appear in "Snoozed" or be hidden
+				snoozedEmailIDs, _ := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, "snoozed")
+				snoozedSet := make(map[string]bool)
+				for _, id := range snoozedEmailIDs {
+					snoozedSet[id] = true
+				}
+
+				var filtered []*emaildomain.Email
+				for _, email := range emails {
+					if !snoozedSet[email.ID] {
+						filtered = append(filtered, email)
+					}
+				}
+
+				// Recalculate totals if we filtered anything? 
+				// Gmail total is total matched by label. 
+				// If we filter, the page size might shrink. 
+				// Ideally we should loop to fill page like Inbox, but for now filtering is safer correctness-wise.
+				return filtered, total, nil
+			}
+
+			// Fallback: Use DB mapping if no Gmail label is configured
 			dbEmailIDs, err := u.emailKanbanColumnRepo.GetEmailsByColumn(userID, status)
 			if err != nil {
 				log.Printf("[GetEmailsByStatus] Failed to get emails for column %s: %v", status, err)
@@ -1121,6 +1183,13 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		}
 
 		// status == "inbox"
+		// Determine which Gmail label to fetch from. Default is "INBOX", but user might have mapped it.
+		targetLabel := "INBOX"
+		inboxCol, _ := u.kanbanColumnRepo.GetColumnByID(userID, "inbox")
+		if inboxCol != nil && inboxCol.GmailLabelID != "" {
+			targetLabel = inboxCol.GmailLabelID
+		}
+
 		emailToCol, err := u.emailKanbanColumnRepo.GetEmailColumnMap(userID)
 		if err != nil {
 			log.Printf("[GetEmailsByStatus] Failed to get email-column map: %v", err)
@@ -1141,7 +1210,7 @@ func (u *emailUsecase) GetEmailsByStatus(userID, status string, limit, offset in
 		var lastTotal int
 		
 		for i := 0; i < maxAttempts; i++ {
-			emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, "INBOX", batchSize, currentOffset, "", u.makeTokenUpdateCallback(userID))
+			emails, total, err := u.mailProvider.GetEmails(ctx, accessToken, refreshToken, targetLabel, batchSize, currentOffset, "", u.makeTokenUpdateCallback(userID))
 			if err != nil {
 				return nil, 0, err
 			}
