@@ -13,7 +13,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sandbox"]
+      test: [ "CMD-SHELL", "pg_isready -U sandbox" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,6 +22,7 @@ services:
       - awad-network
 
   backend:
+    image: hykura1501/awad-mail-app-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -37,6 +38,7 @@ services:
       - awad-network
 
   frontend:
+    image: hykura1501/awad-mail-app-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
